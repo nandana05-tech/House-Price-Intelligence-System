@@ -1,0 +1,43 @@
+{
+    "created_at": "2026-04-23 08:21:23",
+    "batas_segmen": 1200000000.0,
+    "fitur": [
+        "Kamar Tidur",
+        "Kamar Mandi",
+        "Garasi",
+        "Luas Tanah",
+        "Luas Bangunan",
+        "Lokasi_Target"
+    ],
+    "model_low": {
+        "deskripsi": "Harga <= 1,200,000,000",
+        "jumlah_train": 7429,
+        "jumlah_test": 1790,
+        "mape": 10.0824
+    },
+    "model_high": {
+        "deskripsi": "Harga > 1,200,000,000",
+        "jumlah_train": 7266,
+        "jumlah_test": 1884,
+        "mape": 10.6653
+    },
+    "overall": {
+        "r2": 0.9466,
+        "mape": 10.3813,
+        "mae": 170003695.21,
+        "rmse": 290077271.78
+    },
+    "target_encoder": {
+        "cols": [
+            "Lokasi"
+        ],
+        "drop_invariant": false,
+        "handle_missing": "value",
+        "handle_unknown": "value",
+        "hierarchy": null,
+        "min_samples_leaf": 20,
+        "return_df": true,
+        "smoothing": 10,
+        "verbose": 0
+    }
+}

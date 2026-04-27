@@ -1,0 +1,73 @@
+// Prisma schema for House Price Intelligence System
+// Database: PostgreSQL (via Docker)
+// Provider: prisma-client-py (async mode)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+// ── Stores every prediction made via MCP tools ─────────────────────────────
+model Prediction {
+  id           String   @id @default(cuid())
+  tool         String   // "regression" | "classification" | "clustering"
+  inputParams  Json     // raw input feature dict
+  result       Json     // full prediction output dict
+  modelVersion String?  // e.g. "model_low_v2"
+  lokasi       String?  // denormalised for fast filtering
+  latencyMs    Float?
+  createdAt    DateTime @default(now())
+
+  feedback Feedback[]
+
+  @@index([tool])
+  @@index([lokasi])
+  @@index([createdAt])
+}
+
+// ── User-submitted corrections that feed the retraining loop ───────────────
+model Feedback {
+  id           String     @id @default(cuid())
+  predictionId String?
+  prediction   Prediction? @relation(fields: [predictionId], references: [id])
+
+  // Property features
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+
+  // Correction
+  hargaPrediksi  Float   // what the model said
+  hargaAsli      Float   // what the user says the real price is
+  selisihPersen  Float?  // computed: abs(asli - prediksi) / asli * 100
+
+  // Metadata
+  sumber     String   @default("user_feedback") // "user_feedback" | "scraped" | "agent"
+  processed  Boolean  @default(false)            // consumed by retraining pipeline?
+  createdAt  DateTime @default(now())
+
+  @@index([processed])
+  @@index([lokasi])
+  @@index([createdAt])
+}
+
+// ── Retraining job log ──────────────────────────────────────────────────────
+model RetrainingRun {
+  id              String   @id @default(cuid())
+  triggeredAt     DateTime @default(now())
+  feedbackCount   Int      // number of feedback rows used
+  newModelVersion String?  // registered MLflow model version
+  mapeBefore      Float?
+  mapeAfter       Float?
+  status          String   @default("pending") // "pending" | "running" | "success" | "failed"
+  errorMessage    String?
+}

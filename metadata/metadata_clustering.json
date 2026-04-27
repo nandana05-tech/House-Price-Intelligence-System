@@ -1,0 +1,130 @@
+{
+  "saved_at": "2026-04-24 13:33:13",
+  "model": "KMeans + UMAP",
+  "n_clusters": 6,
+  "features": [
+    "log_Harga",
+    "log_LT",
+    "log_LB",
+    "log_Harga_m2",
+    "rasio_LB_LT",
+    "Kamar Tidur",
+    "Kamar Mandi",
+    "Lokasi_enc"
+  ],
+  "umap_params": {
+    "n_components": 10,
+    "n_neighbors": 30,
+    "min_dist": 0.0,
+    "metric": "euclidean"
+  },
+  "kmeans_params": {
+    "n_clusters": 6,
+    "n_init": 50,
+    "max_iter": 500
+  },
+  "evaluasi": {
+    "silhouette_score": 0.591,
+    "davies_bouldin_index": 1.1789,
+    "calinski_harabasz": 8681.77
+  },
+  "label_map": {
+    "0": "Budget",
+    "1": "Affordable",
+    "2": "Mid-Market",
+    "3": "Premium",
+    "4": "Luxury",
+    "5": "Ultra-Luxury",
+    "6": "Tier-7",
+    "7": "Tier-8"
+  },
+  "cluster_summary": [
+    {
+      "cluster_id": 0,
+      "label": "Budget",
+      "jumlah_data": 326,
+      "harga_min": 145000000.0,
+      "harga_max": 3900000000.0,
+      "harga_median": 185000000.0,
+      "luas_tanah_median": 42.0,
+      "luas_bangunan_median": 33.0,
+      "lokasi_dominan": [
+        "Citayam",
+        "Pangkalan Jati"
+      ]
+    },
+    {
+      "cluster_id": 1,
+      "label": "Affordable",
+      "jumlah_data": 566,
+      "harga_min": 50000000.0,
+      "harga_max": 1150000000.0,
+      "harga_median": 360000000.0,
+      "luas_tanah_median": 60.0,
+      "luas_bangunan_median": 42.0,
+      "lokasi_dominan": [
+        "Citayam"
+      ]
+    },
+    {
+      "cluster_id": 2,
+      "label": "Mid-Market",
+      "jumlah_data": 5555,
+      "harga_min": 50000000.0,
+      "harga_max": 4500000000.0,
+      "harga_median": 630000000.0,
+      "luas_tanah_median": 71.0,
+      "luas_bangunan_median": 45.0,
+      "lokasi_dominan": [
+        "Sawangan",
+        "Cilodong",
+        "Cinere"
+      ]
+    },
+    {
+      "cluster_id": 3,
+      "label": "Premium",
+      "jumlah_data": 6322,
+      "harga_min": 230000000.0,
+      "harga_max": 4800000000.0,
+      "harga_median": 950000000.0,
+      "luas_tanah_median": 73.0,
+      "luas_bangunan_median": 80.0,
+      "lokasi_dominan": [
+        "Cinere",
+        "Sawangan",
+        "Pancoran Mas"
+      ]
+    },
+    {
+      "cluster_id": 4,
+      "label": "Luxury",
+      "jumlah_data": 2885,
+      "harga_min": 600000000.0,
+      "harga_max": 4800000000.0,
+      "harga_median": 1470000000.0,
+      "luas_tanah_median": 96.0,
+      "luas_bangunan_median": 110.0,
+      "lokasi_dominan": [
+        "Cinere",
+        "Cilodong",
+        "Sawangan"
+      ]
+    },
+    {
+      "cluster_id": 5,
+      "label": "Ultra-Luxury",
+      "jumlah_data": 3534,
+      "harga_min": 235000000.0,
+      "harga_max": 5000000000.0,
+      "harga_median": 1900000000.0,
+      "luas_tanah_median": 125.0,
+      "luas_bangunan_median": 150.0,
+      "lokasi_dominan": [
+        "Cinere",
+        "Sawangan",
+        "Cimanggis"
+      ]
+    }
+  ]
+}
