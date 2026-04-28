@@ -40,7 +40,7 @@ services:
 
   # ── PostgreSQL ───────────────────────────────────────────────────────────
   postgresql:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: hpi_postgres
     ports:
       - "5435:5432"
@@ -107,6 +107,10 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MLFLOW_TRACKING_URI: http://mlflow:5000
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EMBEDDING_MODEL: text-embedding-3-small
+      RAG_ENABLED: "true"
+      RAG_TOP_K_PROPERTIES: "3"
+      RAG_TOP_K_KNOWLEDGE: "2"
     command: sh -c "prisma db push --accept-data-loss && uvicorn api.main:app --host 0.0.0.0 --port 8080"
     depends_on:
       postgresql:

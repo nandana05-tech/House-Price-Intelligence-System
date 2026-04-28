@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
+from rag.context_builder import build_rag_context
+
 from services.predictor import classify_segment, cluster_property, predict_price
 
 router = APIRouter(tags=["Chat Agent"])
@@ -147,6 +149,34 @@ async def chat_with_agent(body: ChatRequest) -> ChatResponse:
                     "content": json.dumps(function_response),
                 })
             
+            # ── RAG INJECTION ─────────────────────────────────────────────
+            # Extract prediction result from tool responses (if any)
+            prediction_result = None
+            if tools_used and "predict_price" in tools_used:
+                # Find the predict_price tool response in recent messages
+                for msg in reversed(messages[-4:]):  # Check last few messages (max 3 tools)
+                    if msg.get("role") == "tool" and msg.get("name") == "predict_price":
+                        prediction_result = json.loads(msg.get("content", "{}"))
+                        break
+
+            # Build RAG context using user query and prediction result
+            rag_context = build_rag_context(
+                query=body.message,
+                prediction=prediction_result,
+            )
+
+            if rag_context:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "Use the following retrieved context to enrich your answer. "
+                        "When relevant, cite comparable properties and area knowledge. "
+                        "Be transparent about model confidence and limitations.\n\n"
+                        + rag_context
+                    ),
+                })
+            # ── END RAG INJECTION ─────────────────────────────────────────
+
             # Panggilan kedua ke GPT untuk memformulasikan jawaban akhir setelah mendapat data
             second_response = await client.chat.completions.create(
                 model="gpt-4o-mini",

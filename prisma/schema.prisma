@@ -60,7 +60,6 @@ model Feedback {
   @@index([createdAt])
 }
 
-// ── Retraining job log ──────────────────────────────────────────────────────
 model RetrainingRun {
   id              String   @id @default(cuid())
   triggeredAt     DateTime @default(now())
@@ -70,4 +69,31 @@ model RetrainingRun {
   mapeAfter       Float?
   status          String   @default("pending") // "pending" | "running" | "success" | "failed"
   errorMessage    String?
+}
+
+// ── RAG Tables (embeddings managed via pgvector raw SQL) ────────────────────
+model PropertyEmbedding {
+  id            Int      @id @default(autoincrement())
+  propertyId    String?
+  lokasi        String
+  kamarTidur    Int
+  kamarMandi    Int
+  garasi        Int
+  luasTanah     Float
+  luasBangunan  Float
+  harga         BigInt
+  clusterId     Int?
+  segmentLabel  String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  // Note: embedding vector stored natively via pgvector, managed outside Prisma
+}
+
+model KnowledgeBase {
+  id        Int      @id @default(autoincrement())
+  docType   String   // area_profile | market_rule | faq
+  title     String
+  content   String
+  source    String?
+  createdAt DateTime @default(now())
 }
