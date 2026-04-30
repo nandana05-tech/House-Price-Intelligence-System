@@ -7,7 +7,22 @@
         "Garasi",
         "Luas Tanah",
         "Luas Bangunan",
-        "Lokasi_Target"
+        "Lokasi_Target",
+        "total_kamar",
+        "kamar_ratio",
+        "garasi_kamar",
+        "luxury_score",
+        "rasio_bang_tanah",
+        "luas_per_kamar",
+        "luas_total",
+        "log_luas_tanah",
+        "log_luas_bangunan",
+        "log_lokasi",
+        "lokasi_x_kamar",
+        "lokasi_x_garasi",
+        "lokasi_x_luxury",
+        "lokasi_x_luas_bang",
+        "lokasi_per_kamar"
     ],
     "model_low": {
         "deskripsi": "Harga <= 1,200,000,000",

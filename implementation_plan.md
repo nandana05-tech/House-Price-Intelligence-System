@@ -1,13 +1,7 @@
-# RAG Implementation Plan — House Price Intelligence System (HPI)
+# Data Pipeline Implementation Plan — House Price Intelligence System (HPI)
 
-**Version**: 3.0 (Updated)
-**Goal**: Augment the existing ML prediction pipeline with a Retrieval-Augmented Generation (RAG) layer to enable Explainable Prediction, Comparable Property Analysis, Context-Aware Intelligence, Natural Language Consulting, and Reduced LLM Hallucination.
-
-**Key Updates from v2.0**:
-- Knowledge documents contain **static information only** (location, infrastructure, characteristics)
-- **Dynamic data** (price stats, dominant segment, appreciation) computed live from `property_embeddings` via `get_area_stats()` — always up-to-date without manual re-ingestion
-- LangChain used selectively (embedder + retriever + ingest only)
-- Token optimization + Redis caching applied by default
+**Version**: 1.0
+**Goal**: Replace file-based CSV dependency with PostgreSQL as single source of truth for all data pipelines (cleaning, retraining, RAG ingest, clustering).
 
 ---
 
@@ -15,738 +9,603 @@
 
 ```
 BEFORE:
-User → Chat Endpoint → GPT (LLM Router) → MCP Tools → ML Models → Raw Numbers
+Raw CSV (file) → Manual cleaning (notebook) → Cleaned CSV (file) → Model training
 
 AFTER:
-User → Chat Endpoint → GPT (LLM Router) → MCP Tools → ML Models
-                                    ↓
-                         [Conditional RAG Trigger]
-                                    ↓
-                 ┌──────────────────────────────────────┐
-                 │  Static: LangChain PGVector           │
-                 │  (knowledge_base — area, infra, FAQ)  │
-                 │                                       │
-                 │  Dynamic: Live SQL query              │
-                 │  (property_embeddings — price stats)  │
-                 └──────────────────────────────────────┘
-                                    ↓
-                   context_builder.py (manual)
-                                    ↓
-                   Enriched Context → GPT Final Answer
-                         (cached in Redis 1hr)
+Raw CSV → RawProperty (PostgreSQL)
+              ↓
+    ┌─────────────────────────────────┐
+    │  Cleaning Pipeline (per model)  │
+    └─────────────────────────────────┘
+              ↓
+    ┌──────────────────────────────────────────────┐
+    │  CleanPropertyRegression      (PostgreSQL)   │
+    │  CleanPropertyClassification  (PostgreSQL)   │
+    │  CleanPropertyClustering      (PostgreSQL)   │
+    └──────────────────────────────────────────────┘
+              ↓
+    ┌─────────────────────────────────────────────────────┐
+    │  Retrain Pipeline  → ML Models (.cbm, .pkl)         │
+    │  RAG Ingest        → pgvector (property_embeddings) │
+    │  setup_encoder.py  → target_encoder.pkl             │
+    └─────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Static vs Dynamic Knowledge Design
+## Cleaning Strategy per Model
 
-| Data Type | Source | Update Method |
-|-----------|--------|--------------|
-| Location description | `knowledge/area_profiles/*.md` | Edit `.md` → re-run `ingest_knowledge.py` |
-| Infrastructure (malls, schools, toll) | `knowledge/area_profiles/*.md` | Edit `.md` → re-run `ingest_knowledge.py` |
-| Area characteristics | `knowledge/area_profiles/*.md` | Edit `.md` → re-run `ingest_knowledge.py` |
-| Pricing rules & methodology | `knowledge/market_rules/*.md` | Edit `.md` → re-run `ingest_knowledge.py` |
-| FAQs & model explanation | `knowledge/faqs/*.md` | Edit `.md` → re-run `ingest_knowledge.py` |
-| **Average price per area** | `property_embeddings` (live SQL) | **Automatic** — always current |
-| **Price range per area** | `property_embeddings` (live SQL) | **Automatic** — always current |
-| **Dominant segment per area** | `property_embeddings` (live SQL) | **Automatic** — always current |
-| **Number of comparable properties** | `property_embeddings` (live SQL) | **Automatic** — always current |
+Each model uses a **different cleaning approach** mirroring the exact notebook preprocessing:
 
----
-
-## Goals & RAG Use Cases
-
-| Goal | RAG Role |
-|------|----------|
-| **Explainable Prediction** | Retrieve similar past transactions to justify the predicted price |
-| **Comparable Property Analysis** | Find top-K most similar properties from the dataset |
-| **Context-Aware Intelligence** | Inject area/market context before LLM generates a response |
-| **Natural Language Property Consultant** | Answer questions like "why is Cinere more expensive than Beji?" |
-| **Knowledge Update Without Retraining** | Add new market knowledge to vector DB without touching ML models |
-| **Trust & Transparency** | Show sources/evidence alongside every prediction |
-| **Hybrid Intelligence (ML + Knowledge)** | Combine CatBoost output with retrieved domain knowledge |
-| **Decision Support System** | Provide investment context, risk indicators, and market trends |
-| **Reduced Hallucination** | Ground LLM answers in retrieved facts, not parametric memory |
+| Aspect | Regression | Classification | Clustering |
+|--------|-----------|----------------|------------|
+| Outlier method | **Drop** per lokasi Q0.05–Q0.95 + harga/m² filter | **IQR Clip** all numeric columns | **IQR Drop** Harga/LT/LB |
+| Luas filter | LB>10, LT>10, LB≤600, LT≤1000, anomaly kavling | None | None |
+| Spec filter | KT≤8, KM≤8, Garasi≤6 | None | None |
+| Min price | Rp 200 juta | None | Rp 50 juta |
+| Price range | Q0.01–Q0.99 global | IQR clip | Rp 50jt–10M |
+| Lokasi encoding | `category_encoders.TargetEncoder` | One-hot (get_dummies) | Median log_Harga per kecamatan |
+| Expected rows | ~18,000 | ~24,000 | ~19,000 |
 
 ---
 
-## LangChain Usage Decision
+## Phase 1 — Prisma Schema Update
 
-| Component | Use LangChain? | Reason |
-|-----------|---------------|--------|
-| `rag/embedder.py` | ✅ `OpenAIEmbeddings` | Removes boilerplate, handles batching |
-| `rag/retriever.py` | ✅ `PGVector` | Abstracts raw psycopg2 + pgvector SQL |
-| `scripts/ingest_knowledge.py` | ✅ `TextLoader` + `MarkdownTextSplitter` | Smart chunking for markdown docs |
-| `rag/context_builder.py` | ❌ Manual | Custom HPI logic, no LangChain equivalent |
-| `api/chat_endpoint.py` | ❌ Manual | Native OpenAI function calling already optimal |
-| `pipelines/` | ❌ Not relevant | Pure ML retraining logic |
-| `kafka/` | ❌ Not relevant | Pure Kafka consumer logic |
+### 1.1 Add New Tables to `prisma/schema.prisma`
 
----
-
-## Phase 1 — Infrastructure Setup
-
-### 1.1 Vector Database: pgvector (extends existing PostgreSQL)
-
-No new Docker service needed — pgvector is a PostgreSQL extension.
-
-```sql
--- Run once inside hpi_postgres container
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- Comparable properties table (dynamic data source)
-CREATE TABLE property_embeddings (
-    id            SERIAL PRIMARY KEY,
-    property_id   TEXT,
-    lokasi        TEXT,
-    kamar_tidur   INT,
-    kamar_mandi   INT,
-    garasi        INT,
-    luas_tanah    FLOAT,
-    luas_bangunan FLOAT,
-    harga         BIGINT,
-    cluster_id    INT,
-    segment_label TEXT,
-    metadata      JSONB,
-    embedding     vector(1536)
-);
-
--- Knowledge base table (static data source)
-CREATE TABLE knowledge_base (
-    id         SERIAL PRIMARY KEY,
-    doc_type   TEXT,        -- 'area_profile' | 'market_rule' | 'faq'
-    title      TEXT,
-    content    TEXT,
-    source     TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    embedding  vector(1536)
-);
-
--- HNSW index for fast ANN search
-CREATE INDEX ON property_embeddings USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX ON knowledge_base USING hnsw (embedding vector_cosine_ops);
-```
-
-### 1.2 Update Prisma Schema
+Add these models alongside existing ones:
 
 ```prisma
-// prisma/schema.prisma — add RAG tables
-model PropertyEmbedding {
-  id            Int      @id @default(autoincrement())
-  propertyId    String?
-  lokasi        String
-  kamarTidur    Int
-  kamarMandi    Int
-  garasi        Int
-  luasTanah     Float
-  luasBangunan  Float
-  harga         BigInt
-  clusterId     Int?
-  segmentLabel  String?
-  metadata      Json?
-  createdAt     DateTime @default(now())
-  // Note: embedding vector stored natively via pgvector, managed outside Prisma
+// Raw data — stores parsed but uncleaned data
+model RawProperty {
+  id           Int      @id @default(autoincrement())
+  harga        Float?
+  kamarTidur   Int?
+  kamarMandi   Int?
+  garasi       Int      @default(0)
+  luasTanah    Float?
+  luasBangunan Float?
+  lokasi       String
+  createdAt    DateTime @default(now())
 }
 
-model KnowledgeBase {
-  id        Int      @id @default(autoincrement())
-  docType   String   // area_profile | market_rule | faq
-  title     String
-  content   String
-  source    String?
-  createdAt DateTime @default(now())
+// Clean data for regression model
+model CleanPropertyRegression {
+  id           Int      @id @default(autoincrement())
+  harga        Float
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+  createdAt    DateTime @default(now())
+}
+
+// Clean data for classification model
+model CleanPropertyClassification {
+  id           Int      @id @default(autoincrement())
+  harga        Float
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+  kelasHarga   Int      // 0=Murah, 1=Menengah, 2=Atas, 3=Mewah
+  createdAt    DateTime @default(now())
+}
+
+// Clean data for clustering model (includes engineered features)
+model CleanPropertyClustering {
+  id           Int      @id @default(autoincrement())
+  harga        Float
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+  logHarga     Float
+  logLT        Float
+  logLB        Float
+  hargaPerM2   Float
+  logHargaM2   Float
+  rasioLBLT    Float
+  lokasi_enc   Float
+  clusterId    Int?
+  clusterLabel String?
+  createdAt    DateTime @default(now())
 }
 ```
 
-### 1.3 Install New Dependencies
+### 1.2 Apply Schema
 
-```toml
-# pyproject.toml — add these dependencies
-[project.dependencies]
-# existing deps ...
-langchain-openai = ">=0.1.0"
-langchain-community = ">=0.2.0"
-langchain = ">=0.2.0"          # core only — for MarkdownTextSplitter
-pgvector = ">=0.3.0"
-tiktoken = ">=0.7.0"
+```bash
+docker cp prisma/schema.prisma hpi_api:/app/prisma/schema.prisma
+docker exec hpi_api sh -c "prisma db push --accept-data-loss"
 ```
 
 ---
 
-## Phase 2 — Knowledge Base Construction (Static Only)
+## Phase 2 — New Scripts
 
 ### 2.1 Folder Structure Addition
 
 ```
 hpi/
-├── rag/                              ← NEW
-│   ├── __init__.py
-│   ├── embedder.py                   ← LangChain OpenAIEmbeddings wrapper
-│   ├── retriever.py                  ← LangChain PGVector + live SQL stats
-│   ├── context_builder.py            ← Manual: assembles static + dynamic context
-│   └── cache.py                      ← Redis cache for RAG results
-│
-├── knowledge/                        ← NEW — STATIC knowledge only
-│   ├── area_profiles/                ← Location, infra, characteristics (no prices)
-│   │   ├── cinere.md
-│   │   ├── beji.md
-│   │   ├── sawangan.md
-│   │   └── ...                       ← one file per kecamatan in Depok
-│   ├── market_rules/
-│   │   ├── pricing_factors.md
-│   │   ├── segment_definitions.md
-│   │   └── investment_guidelines.md
-│   └── faqs/
-│       ├── how_price_is_calculated.md
-│       └── model_methodology.md
-│
 └── scripts/
-    ├── ingest_knowledge.py           ← NEW: load knowledge/ → pgvector
-    └── ingest_properties.py          ← NEW: embed dataset → pgvector
+    ├── ingest_raw_data.py                  ← NEW: Raw CSV → RawProperty
+    ├── cleaning_pipeline_regression.py     ← NEW: RawProperty → CleanPropertyRegression
+    ├── cleaning_pipeline_classification.py ← NEW: RawProperty → CleanPropertyClassification
+    ├── cleaning_pipeline_clustering.py     ← NEW: RawProperty → CleanPropertyClustering
+    ├── ingest_knowledge.py                 ← existing
+    ├── ingest_properties.py                ← update: read from CleanPropertyClustering
+    ├── setup_encoder.py                    ← update: read from CleanPropertyRegression
+    └── predict_csv.py                      ← existing
 ```
 
-### 2.2 Knowledge Document Format (Static Only)
+### 2.2 `scripts/ingest_raw_data.py`
 
-```markdown
-<!-- knowledge/area_profiles/cinere.md -->
-# Cinere
-
-## Location
-- Sub-district (kecamatan) in South Depok, West Java
-- Borders: Limo (north), Sawangan (east), Tangerang Selatan (west)
-
-## Infrastructure
-- Toll access: Cinere–Jagorawi (CiJago) toll road
-- Commercial: Cinere Mall, Bellevue Mall
-- Education: multiple international schools nearby
-
-## Area Characteristics
-- Predominantly residential, popular among Jakarta professionals and expatriates
-- Premium residential estates: Jl. Cinere Raya, Perumahan Cinere Indah
-- Limited new land supply due to established residential density
-```
-
-> **Note**: No price data, segment, or appreciation rates in knowledge documents.
-> All dynamic price statistics are computed live from `property_embeddings`.
-
----
-
-## Phase 3 — RAG Layer Implementation
-
-### 3.1 `rag/embedder.py` — LangChain OpenAIEmbeddings
+Parses raw CSV using the same `parse_harga()` and `parse_luas()` functions from all notebooks, then stores into `RawProperty`.
 
 ```python
 """
-Embedding generation using LangChain OpenAIEmbeddings.
+Load raw CSV into PostgreSQL RawProperty table.
+Mirrors parse_harga() and parse_luas() from all three training notebooks.
+
+Run:
+    docker exec -e PYTHONPATH=/app hpi_api python scripts/ingest_raw_data.py
 """
-from __future__ import annotations
-import os
-from langchain_openai import OpenAIEmbeddings
-
-_embeddings: OpenAIEmbeddings | None = None
-
-
-def get_embeddings() -> OpenAIEmbeddings:
-    global _embeddings
-    if _embeddings is None:
-        _embeddings = OpenAIEmbeddings(
-            model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-        )
-    return _embeddings
-
-
-def embed_text(text: str) -> list[float]:
-    return get_embeddings().embed_query(text)
-```
-
-### 3.2 `rag/retriever.py` — LangChain PGVector + Live SQL Stats
-
-```python
-"""
-Two retrieval strategies:
-1. Static: LangChain PGVector for knowledge_base (area profiles, rules, FAQs)
-2. Dynamic: Raw SQL on property_embeddings for live price statistics
-"""
-from __future__ import annotations
-import os
+import os, re
+import numpy as np
+import pandas as pd
 import psycopg2
-from pgvector.psycopg2 import register_vector
-from langchain_community.vectorstores import PGVector
-from rag.embedder import get_embeddings
+from pathlib import Path
 
-CONNECTION_STRING = os.getenv("DATABASE_URL", "")
+DATA_PATH = Path("/app/data/Raw-Final-Rumah.csv")
 
-_property_store: PGVector | None = None
-_knowledge_store: PGVector | None = None
-_pg_conn = None
+def parse_harga(h):
+    if pd.isna(h): return None
+    h = str(h).replace(',', '.').strip()
+    match = re.search(r'[\d.]+', h)
+    if not match: return None
+    angka = float(match.group())
+    if 'miliar' in h.lower(): return angka * 1_000_000_000
+    elif 'juta' in h.lower(): return angka * 1_000_000
+    return angka
 
+def parse_luas(x):
+    match = re.search(r'[\d.]+', str(x))
+    return float(match.group()) if match else None
 
-# ── LangChain PGVector — comparable properties ────────────────────────────
+print("Loading raw CSV...")
+df = pd.read_csv(DATA_PATH)
+print(f"  Raw rows: {len(df)}")
 
-def _get_property_store() -> PGVector:
-    global _property_store
-    if _property_store is None:
-        _property_store = PGVector(
-            connection_string=CONNECTION_STRING,
-            embedding_function=get_embeddings(),
-            collection_name="property_embeddings",
-        )
-    return _property_store
+df['Harga'] = df['Harga'].apply(parse_harga)
+df['Harga'] = pd.to_numeric(df['Harga'], errors='coerce')
+df['Kamar Tidur'] = pd.to_numeric(df['Kamar Tidur'], errors='coerce')
+df['Kamar Mandi'] = pd.to_numeric(df['Kamar Mandi'], errors='coerce')
+df['Garasi'] = pd.to_numeric(df['Garasi'], errors='coerce').fillna(0)
+df['Luas Tanah'] = df['Luas Tanah'].apply(parse_luas)
+df['Luas Bangunan'] = df['Luas Bangunan'].apply(parse_luas)
 
+if 'Kecamatan' in df.columns:
+    df = df.rename(columns={'Kecamatan': 'Lokasi'})
+df = df.drop(columns=['Page'], errors='ignore')
+df = df.replace([np.inf, -np.inf], np.nan)
 
-def _get_knowledge_store() -> PGVector:
-    global _knowledge_store
-    if _knowledge_store is None:
-        _knowledge_store = PGVector(
-            connection_string=CONNECTION_STRING,
-            embedding_function=get_embeddings(),
-            collection_name="knowledge_base",
-        )
-    return _knowledge_store
-
-
-def get_comparable_properties(
-    lokasi: str,
-    kamar_tidur: int,
-    kamar_mandi: int,
-    garasi: int,
-    luas_tanah: float,
-    luas_bangunan: float,
-    harga: float,
-    top_k: int = 3,
-) -> list[dict]:
-    """Retrieve top-K similar properties via vector similarity search."""
-    query_text = (
-        f"Property in {lokasi}, {kamar_tidur}BR {kamar_mandi}BA, "
-        f"LT {luas_tanah}m² LB {luas_bangunan}m², Rp {harga:,.0f}"
-    )
-    results = _get_property_store().similarity_search_with_score(query_text, k=top_k)
-    return [
-        {**doc.metadata, "similarity": round(1 - score, 4)}
-        for doc, score in results
-    ]
-
-
-def get_knowledge(query: str, top_k: int = 2) -> list[dict]:
-    """Retrieve relevant static knowledge documents."""
-    results = _get_knowledge_store().similarity_search_with_score(query, k=top_k)
-    return [
-        {
-            "title": doc.metadata.get("title", ""),
-            "content": doc.page_content[:300],   # truncate — token efficient
-            "doc_type": doc.metadata.get("doc_type", ""),
-            "similarity": round(1 - score, 4),
-        }
-        for doc, score in results
-    ]
-
-
-# ── Live SQL — dynamic area statistics ───────────────────────────────────
-
-def _get_pg_conn():
-    global _pg_conn
-    if _pg_conn is None or _pg_conn.closed:
-        _pg_conn = psycopg2.connect(CONNECTION_STRING)
-        register_vector(_pg_conn)
-    return _pg_conn
-
-
-def get_area_stats(lokasi: str) -> dict:
-    """
-    Compute live price statistics directly from property_embeddings.
-    Always up-to-date — no manual knowledge update needed.
-    Returns empty dict if lokasi not found.
-    """
-    try:
-        conn = _get_pg_conn()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    AVG(harga)::BIGINT         AS avg_harga,
-                    MIN(harga)                 AS min_harga,
-                    MAX(harga)                 AS max_harga,
-                    COUNT(*)                   AS jumlah_data,
-                    MODE() WITHIN GROUP (ORDER BY segment_label) AS dominant_segment
-                FROM property_embeddings
-                WHERE lokasi = %s
-            """, (lokasi,))
-            row = cur.fetchone()
-        if not row or row[3] == 0:
-            return {}
-        return {
-            "avg_harga": row[0],
-            "min_harga": row[1],
-            "max_harga": row[2],
-            "jumlah_data": row[3],
-            "dominant_segment": row[4],
-        }
-    except Exception:
-        return {}
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+with conn.cursor() as cur:
+    cur.execute('TRUNCATE TABLE "RawProperty" RESTART IDENTITY;')
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT INTO "RawProperty"
+            (harga, "kamarTidur", "kamarMandi", garasi, "luasTanah", "luasBangunan", lokasi)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            float(row['Harga']) if pd.notna(row['Harga']) else None,
+            int(row['Kamar Tidur']) if pd.notna(row['Kamar Tidur']) else None,
+            int(row['Kamar Mandi']) if pd.notna(row['Kamar Mandi']) else None,
+            int(row['Garasi']) if pd.notna(row['Garasi']) else 0,
+            float(row['Luas Tanah']) if pd.notna(row['Luas Tanah']) else None,
+            float(row['Luas Bangunan']) if pd.notna(row['Luas Bangunan']) else None,
+            str(row['Lokasi']),
+        ))
+    conn.commit()
+print(f"Inserted {len(df)} raw records into RawProperty.")
+conn.close()
 ```
 
-### 3.3 `rag/cache.py` — Redis Cache
+### 2.3 `scripts/cleaning_pipeline_regression.py`
+
+Mirrors **regresio_v1.2.ipynb** exactly:
 
 ```python
 """
-Cache RAG context in Redis to avoid redundant embedding + SQL calls.
-TTL: 1 hour per query hash.
+Clean RawProperty → CleanPropertyRegression.
+Mirrors EXACT preprocessing from regresio_v1.2.ipynb.
+
+Cleaning steps:
+  1. Drop NaN
+  2. Hapus luas tidak wajar (LB>10, LT>10, LB≤600, LT≤1000)
+  3. Hapus anomali kavling (LT>400 & LB<150)
+  4. Hapus spec ekstrem (KT≤8, KM≤8, Garasi≤6)
+  5. Hapus harga < Rp 200 juta
+  6. Filter harga global Q0.01–Q0.99
+  7. Filter outlier per lokasi Q0.05–Q0.95 (skip if < 10 rows)
+  8. Filter harga per m² P5–P95
+
+Run:
+    docker exec -e PYTHONPATH=/app hpi_api python scripts/cleaning_pipeline_regression.py
 """
-from __future__ import annotations
-import hashlib
-import json
 import os
-import redis
+import numpy as np
+import pandas as pd
+import psycopg2
 
-_client: redis.Redis | None = None
-RAG_CACHE_TTL = 3600  # 1 hour
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
 
+df = pd.read_sql('SELECT * FROM "RawProperty"', conn)
+df = df.rename(columns={
+    "kamarTidur": "Kamar Tidur", "kamarMandi": "Kamar Mandi",
+    "luasTanah": "Luas Tanah", "luasBangunan": "Luas Bangunan",
+    "harga": "Harga", "lokasi": "Lokasi", "garasi": "Garasi",
+})
+print(f"Raw: {len(df)} rows")
 
-def _get_client() -> redis.Redis:
-    global _client
-    if _client is None:
-        _client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    return _client
+df = df.replace([np.inf, -np.inf], np.nan)
+df = df.dropna(subset=['Harga','Kamar Tidur','Kamar Mandi',
+                        'Garasi','Luas Tanah','Luas Bangunan'])
+df_clean = df.copy()
 
+df_clean = df_clean[df_clean['Luas Bangunan'] > 10]
+df_clean = df_clean[df_clean['Luas Tanah'] > 10]
+df_clean = df_clean[~((df_clean['Luas Tanah'] > 400) & (df_clean['Luas Bangunan'] < 150))]
+df_clean = df_clean[df_clean['Luas Bangunan'] <= 600]
+df_clean = df_clean[df_clean['Luas Tanah'] <= 1000]
+df_clean = df_clean[df_clean['Kamar Tidur'] <= 8]
+df_clean = df_clean[df_clean['Kamar Mandi'] <= 8]
+df_clean = df_clean[df_clean['Garasi'] <= 6]
+df_clean = df_clean[df_clean['Harga'] >= 200_000_000]
 
-def _cache_key(query: str, prediction: dict | None) -> str:
-    pred_hash = hashlib.md5(
-        json.dumps(prediction or {}, sort_keys=True).encode()
-    ).hexdigest()
-    return f"rag:{hashlib.md5(f'{query}:{pred_hash}'.encode()).hexdigest()}"
+Q1, Q3 = df_clean['Harga'].quantile([0.01, 0.99])
+df_clean = df_clean[(df_clean['Harga'] >= Q1) & (df_clean['Harga'] <= Q3)]
 
+def filter_lokasi_outlier(group):
+    if len(group) < 10: return group
+    q1 = group['Harga'].quantile(0.05)
+    q3 = group['Harga'].quantile(0.95)
+    return group[(group['Harga'] >= q1) & (group['Harga'] <= q3)]
 
-def get_cached_context(query: str, prediction: dict | None) -> str | None:
-    try:
-        cached = _get_client().get(_cache_key(query, prediction))
-        return cached.decode() if cached else None
-    except Exception:
-        return None
+df_clean = df_clean.groupby('Lokasi', group_keys=False).apply(filter_lokasi_outlier)
 
+df_clean['harga_per_m2'] = df_clean['Harga'] / df_clean['Luas Bangunan']
+p5, p95 = df_clean['harga_per_m2'].quantile([0.05, 0.95])
+df_clean = df_clean[(df_clean['harga_per_m2'] >= p5) & (df_clean['harga_per_m2'] <= p95)]
+df_clean = df_clean.drop(columns=['harga_per_m2'])
 
-def set_cached_context(query: str, prediction: dict | None, context: str) -> None:
-    try:
-        _get_client().setex(_cache_key(query, prediction), RAG_CACHE_TTL, context)
-    except Exception:
-        pass  # cache failure is non-critical
+print(f"Clean (regression): {len(df_clean)} rows")
+
+with conn.cursor() as cur:
+    cur.execute('TRUNCATE TABLE "CleanPropertyRegression" RESTART IDENTITY;')
+    for _, row in df_clean.iterrows():
+        cur.execute("""
+            INSERT INTO "CleanPropertyRegression"
+            (harga, "kamarTidur", "kamarMandi", garasi, "luasTanah", "luasBangunan", lokasi)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+        """, (float(row['Harga']), int(row['Kamar Tidur']), int(row['Kamar Mandi']),
+               int(row['Garasi']), float(row['Luas Tanah']), float(row['Luas Bangunan']),
+               str(row['Lokasi'])))
+    conn.commit()
+print(f"Saved {len(df_clean)} rows to CleanPropertyRegression.")
+conn.close()
 ```
 
-### 3.4 `rag/context_builder.py` — Static + Dynamic Assembly
+### 2.4 `scripts/cleaning_pipeline_classification.py`
+
+Mirrors **clasifikasi_v1.0.ipynb** exactly:
 
 ```python
 """
-Builds enriched prompt context combining:
-- ML prediction output
-- Static knowledge (area profiles, rules) via pgvector
-- Dynamic price statistics (live SQL from property_embeddings)
-- Comparable properties (vector similarity search)
-"""
-from __future__ import annotations
-from rag.retriever import get_comparable_properties, get_knowledge, get_area_stats
-from rag.cache import get_cached_context, set_cached_context
+Clean RawProperty → CleanPropertyClassification.
+Mirrors EXACT preprocessing from clasifikasi_v1.0.ipynb.
 
-RAG_KEYWORDS = [
-    "harga", "price", "estimasi", "lokasi", "segmen", "cluster",
-    "rumah", "properti", "property", "beli", "invest", "mahal", "murah",
+Cleaning steps:
+  1. Drop NaN
+  2. IQR Clip (NOT drop) on all numeric columns
+  3. Label harga: 0=Murah(≤745jt), 1=Menengah(745jt-1.3M),
+                  2=Atas(1.3M-2.645M), 3=Mewah(>2.645M)
+
+Run:
+    docker exec -e PYTHONPATH=/app hpi_api python scripts/cleaning_pipeline_classification.py
+"""
+import os
+import numpy as np
+import pandas as pd
+import psycopg2
+
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+
+df = pd.read_sql('SELECT * FROM "RawProperty"', conn)
+df = df.rename(columns={
+    "kamarTidur": "Kamar Tidur", "kamarMandi": "Kamar Mandi",
+    "luasTanah": "Luas Tanah", "luasBangunan": "Luas Bangunan",
+    "harga": "Harga", "lokasi": "Lokasi", "garasi": "Garasi",
+})
+print(f"Raw: {len(df)} rows")
+
+df = df.replace([np.inf, -np.inf], np.nan)
+df = df.dropna(subset=['Harga','Kamar Tidur','Kamar Mandi',
+                        'Garasi','Luas Tanah','Luas Bangunan'])
+
+# IQR Clip — bukan drop, sesuai notebook klasifikasi
+num_cols = ['Harga','Kamar Tidur','Kamar Mandi','Garasi','Luas Tanah','Luas Bangunan']
+for col in num_cols:
+    df[col] = df[col].astype(float)
+    Q1 = df[col].quantile(0.25)
+    Q3 = df[col].quantile(0.75)
+    IQR = Q3 - Q1
+    df[col] = df[col].clip(Q1 - 1.5 * IQR, Q3 + 1.5 * IQR)
+
+def label_harga(harga):
+    if harga <= 745_000_000: return 0
+    elif harga <= 1_300_000_000: return 1
+    elif harga <= 2_645_000_000: return 2
+    else: return 3
+
+df['kelas_harga'] = df['Harga'].apply(label_harga)
+print(f"Clean (classification): {len(df)} rows")
+
+with conn.cursor() as cur:
+    cur.execute('TRUNCATE TABLE "CleanPropertyClassification" RESTART IDENTITY;')
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT INTO "CleanPropertyClassification"
+            (harga, "kamarTidur", "kamarMandi", garasi,
+             "luasTanah", "luasBangunan", lokasi, "kelasHarga")
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (float(row['Harga']), int(row['Kamar Tidur']), int(row['Kamar Mandi']),
+               int(row['Garasi']), float(row['Luas Tanah']), float(row['Luas Bangunan']),
+               str(row['Lokasi']), int(row['kelas_harga'])))
+    conn.commit()
+print(f"Saved {len(df)} rows to CleanPropertyClassification.")
+conn.close()
+```
+
+### 2.5 `scripts/cleaning_pipeline_clustering.py`
+
+Mirrors **clustering_v1_2_2.ipynb** exactly:
+
+```python
+"""
+Clean RawProperty → CleanPropertyClustering.
+Mirrors EXACT preprocessing from clustering_v1_2_2.ipynb.
+
+Cleaning steps:
+  1. Drop NaN
+  2. Filter harga: Rp 50 juta – Rp 10 miliar
+  3. IQR Drop (NOT clip) on Harga, Luas Tanah, Luas Bangunan
+  4. Log transform: log_Harga, log_LT, log_LB, log_Harga_m2
+  5. Derived features: rasio_LB_LT, Harga_per_m2
+  6. Target encoding: Lokasi → median log_Harga per kecamatan
+  7. Save clustering_encoder.pkl
+
+Run:
+    docker exec -e PYTHONPATH=/app hpi_api python scripts/cleaning_pipeline_clustering.py
+"""
+import os, json, pickle
+import numpy as np
+import pandas as pd
+import psycopg2
+from pathlib import Path
+
+MODELS_DIR = Path("/app/models")
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+
+df = pd.read_sql('SELECT * FROM "RawProperty"', conn)
+df = df.rename(columns={
+    "kamarTidur": "Kamar Tidur", "kamarMandi": "Kamar Mandi",
+    "luasTanah": "Luas Tanah", "luasBangunan": "Luas Bangunan",
+    "harga": "Harga", "lokasi": "Lokasi", "garasi": "Garasi",
+})
+print(f"Raw: {len(df)} rows")
+
+df = df.replace([np.inf, -np.inf], np.nan)
+df = df.dropna(subset=['Harga','Kamar Tidur','Kamar Mandi',
+                        'Garasi','Luas Tanah','Luas Bangunan'])
+df_clean = df.copy()
+
+# Filter harga wajar
+df_clean = df_clean[
+    (df_clean['Harga'] >= 50_000_000) &
+    (df_clean['Harga'] <= 10_000_000_000)
 ]
 
+# IQR Drop — sesuai notebook clustering
+for col in ['Harga','Luas Tanah','Luas Bangunan']:
+    Q1 = df_clean[col].quantile(0.25)
+    Q3 = df_clean[col].quantile(0.75)
+    IQR = Q3 - Q1
+    before = len(df_clean)
+    df_clean = df_clean[
+        (df_clean[col] >= Q1 - 1.5 * IQR) &
+        (df_clean[col] <= Q3 + 1.5 * IQR)
+    ]
+    print(f"  {col}: removed {before - len(df_clean)} rows")
 
-def should_use_rag(query: str) -> bool:
-    """Only trigger RAG for property-related queries — saves tokens."""
-    return any(kw in query.lower() for kw in RAG_KEYWORDS)
+# Feature engineering
+df_clean = df_clean.copy()
+df_clean['log_Harga']    = np.log1p(df_clean['Harga'])
+df_clean['log_LT']       = np.log1p(df_clean['Luas Tanah'])
+df_clean['log_LB']       = np.log1p(df_clean['Luas Bangunan'])
+df_clean['Harga_per_m2'] = df_clean['Harga'] / df_clean['Luas Bangunan'].replace(0, np.nan)
+df_clean['log_Harga_m2'] = np.log1p(df_clean['Harga_per_m2'])
+df_clean['rasio_LB_LT']  = df_clean['Luas Bangunan'] / df_clean['Luas Tanah'].replace(0, np.nan)
 
+# Target encoding — median log_Harga per lokasi
+lokasi_median = df_clean.groupby('Lokasi')['log_Harga'].median()
+df_clean['Lokasi_enc'] = df_clean['Lokasi'].map(lokasi_median)
 
-def build_prediction_context(
-    prediction: dict,
-    comparables: list[dict],
-    knowledge: list[dict],
-    area_stats: dict,
-) -> str:
-    lines = []
+# Drop NaN from feature engineering
+features = ['log_Harga','log_LT','log_LB','log_Harga_m2',
+            'rasio_LB_LT','Kamar Tidur','Kamar Mandi','Lokasi_enc']
+X = df_clean[features].replace([np.inf, -np.inf], np.nan)
+df_clean = df_clean.loc[X.dropna().index].copy()
+print(f"Clean (clustering): {len(df_clean)} rows")
 
-    # ── ML Prediction Result ──────────────────────────────────────────
-    lines.append("## ML Prediction Result")
-    lines.append(f"- Estimated Price: {prediction.get('harga_estimasi_format', 'N/A')}")
-    lines.append(f"- Model Used: {prediction.get('model_digunakan', 'N/A')}")
-    lines.append(f"- MAPE: {prediction.get('mape_persen', 'N/A')}%")
-    lines.append(f"- Segment: {prediction.get('kelas_label', 'N/A')}")
-    lines.append(f"- Cluster: {prediction.get('cluster_label', 'N/A')}")
+# Save clustering encoder
+lokasi_enc_map = df_clean.groupby('Lokasi')['Lokasi_enc'].mean().to_dict()
+fallback = float(df_clean['Lokasi_enc'].mean())
+with open(MODELS_DIR / "clustering_encoder.pkl", "wb") as f:
+    pickle.dump({"map": lokasi_enc_map, "fallback": fallback}, f)
+print(f"Saved clustering_encoder.pkl ({len(lokasi_enc_map)} locations)")
 
-    # ── Dynamic: Live Area Statistics ─────────────────────────────────
-    lokasi = prediction.get("lokasi", "")
-    if area_stats:
-        lines.append(f"\n## Live Market Statistics — {lokasi}")
-        lines.append(f"- Average price: Rp {area_stats['avg_harga']:,}")
-        lines.append(
-            f"- Price range: Rp {area_stats['min_harga']:,} – Rp {area_stats['max_harga']:,}"
-        )
-        lines.append(f"- Dominant segment: {area_stats['dominant_segment']}")
-        lines.append(f"- Data points: {area_stats['jumlah_data']} properties")
-
-    # ── Vector Search: Comparable Properties ──────────────────────────
-    if comparables:
-        lines.append("\n## Comparable Properties")
-        for i, p in enumerate(comparables, 1):
-            lines.append(
-                f"{i}. {p.get('lokasi')} | {p.get('kamar_tidur')}BR "
-                f"| LT {p.get('luas_tanah')}m² | Rp {p.get('harga'):,} "
-                f"| {p.get('segment_label')} | sim: {p.get('similarity')}"
-            )
-
-    # ── Static: Knowledge Documents ───────────────────────────────────
-    if knowledge:
-        lines.append("\n## Area & Market Knowledge")
-        for doc in knowledge:
-            lines.append(f"### {doc['title']}")
-            lines.append(doc["content"])
-
-    return "\n".join(lines)
-
-
-def build_rag_context(query: str, prediction: dict | None = None) -> str:
-    """
-    Main entry point.
-    Returns cached context if available, otherwise retrieves fresh context.
-    Returns empty string if query is not property-related.
-    """
-    if not should_use_rag(query):
-        return ""
-
-    # Check Redis cache first
-    cached = get_cached_context(query, prediction)
-    if cached:
-        return cached
-
-    # Static: knowledge documents via pgvector
-    knowledge = get_knowledge(query, top_k=2)
-
-    comparables = []
-    area_stats = {}
-
-    if prediction:
-        lokasi = prediction.get("lokasi", "")
-
-        # Dynamic: live price stats from property_embeddings
-        area_stats = get_area_stats(lokasi)
-
-        # Vector search: comparable properties
-        comparables = get_comparable_properties(
-            lokasi=lokasi,
-            kamar_tidur=prediction.get("kamar_tidur", 0),
-            kamar_mandi=prediction.get("kamar_mandi", 0),
-            garasi=prediction.get("garasi", 0),
-            luas_tanah=prediction.get("luas_tanah", 0),
-            luas_bangunan=prediction.get("luas_bangunan", 0),
-            harga=prediction.get("harga_estimasi", 0),
-            top_k=3,
-        )
-
-    context = build_prediction_context(prediction or {}, comparables, knowledge, area_stats)
-
-    # Cache result
-    set_cached_context(query, prediction, context)
-    return context
+with conn.cursor() as cur:
+    cur.execute('TRUNCATE TABLE "CleanPropertyClustering" RESTART IDENTITY;')
+    for _, row in df_clean.iterrows():
+        cur.execute("""
+            INSERT INTO "CleanPropertyClustering"
+            (harga, "kamarTidur", "kamarMandi", garasi,
+             "luasTanah", "luasBangunan", lokasi,
+             "logHarga", "logLT", "logLB",
+             "hargaPerM2", "logHargaM2", "rasioLBLT", "lokasi_enc")
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            float(row['Harga']), int(row['Kamar Tidur']),
+            int(row['Kamar Mandi']), int(row['Garasi']),
+            float(row['Luas Tanah']), float(row['Luas Bangunan']),
+            str(row['Lokasi']), float(row['log_Harga']),
+            float(row['log_LT']), float(row['log_LB']),
+            float(row['Harga_per_m2']), float(row['log_Harga_m2']),
+            float(row['rasio_LB_LT']), float(row['Lokasi_enc']),
+        ))
+    conn.commit()
+print(f"Saved {len(df_clean)} rows to CleanPropertyClustering.")
+conn.close()
 ```
 
 ---
 
-## Phase 4 — Integration with Chat Endpoint
+## Phase 3 — Update Existing Scripts
 
-Update `api/chat_endpoint.py` — inject RAG context after ML tool calls:
+### 3.1 Update `scripts/setup_encoder.py`
+
+Read from `CleanPropertyRegression` instead of CSV:
 
 ```python
-# api/chat_endpoint.py — add these imports
-from rag.context_builder import build_rag_context
+# SEBELUM
+df = pd.read_csv(DATA_PATH)
 
-# Inside chat_with_agent(), replace the second GPT call section:
-
-        # ── RAG INJECTION ─────────────────────────────────────────────
-        rag_context = build_rag_context(
-            query=body.message,
-            prediction=prediction_result,
-        )
-
-        if rag_context:
-            messages.append({
-                "role": "system",
-                "content": (
-                    "Use the following retrieved context to enrich your answer. "
-                    "When relevant, cite comparable properties and area knowledge. "
-                    "Be transparent about model confidence and limitations.\n\n"
-                    + rag_context
-                ),
-            })
-        # ── END RAG INJECTION ─────────────────────────────────────────
-
-        second_response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-        )
-        final_reply = second_response.choices[0].message.content
+# SESUDAH
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+df = pd.read_sql('SELECT * FROM "CleanPropertyRegression"', conn)
+df = df.rename(columns={"harga": "Harga", "lokasi": "Lokasi"})
+conn.close()
 ```
 
----
+### 3.2 Update `scripts/ingest_properties.py` (RAG)
 
-## Phase 5 — New API Endpoint: Comparable Properties
-
-Add to `api/predict_endpoint.py`:
+Read from `CleanPropertyClustering` instead of CSV:
 
 ```python
-from rag.retriever import get_comparable_properties
-
-class ComparableRequest(BaseModel):
-    kamar_tidur: int = Field(..., ge=1, le=10)
-    kamar_mandi: int = Field(..., ge=1, le=10)
-    garasi: int = Field(..., ge=0, le=5)
-    luas_tanah: float = Field(..., gt=0)
-    luas_bangunan: float = Field(..., gt=0)
-    lokasi: str = Field(..., min_length=2)
-    harga: float = Field(..., gt=0)
-    top_k: int = Field(5, ge=1, le=20)
-
-@router.post("/comparable_properties")
-async def api_comparable_properties(body: ComparableRequest):
-    """Find top-K most similar properties using vector similarity search."""
-    try:
-        results = get_comparable_properties(**body.model_dump())
-        return {"comparables": results, "count": len(results)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-```
-
----
-
-## Phase 6 — Ingest Scripts
-
-### 6.1 `scripts/ingest_properties.py`
-
-```python
-"""
-Embed all 40,200 property records into pgvector.
-Run once: docker exec -it hpi_api python scripts/ingest_properties.py
-Estimated time: ~20–40 min. Estimated cost: ~$0.32
-"""
-import os
-import pandas as pd
-from langchain_community.vectorstores import PGVector
-from langchain.schema import Document
-from rag.embedder import get_embeddings
-
+# SEBELUM
 df = pd.read_csv("data/data_with_clusters.csv")
 
-docs = []
-for _, row in df.iterrows():
-    text = (
-        f"Property in {row['Lokasi']}, Depok. "
-        f"{int(row['Kamar Tidur'])} bedrooms, {int(row['Kamar Mandi'])} bathrooms, "
-        f"garage {int(row['Garasi'])} cars. "
-        f"Land {float(row['Luas Tanah'])}m², building {float(row['Luas Bangunan'])}m². "
-        f"Price: Rp {float(row['Harga']):,.0f}. "
-        f"Segment: {row.get('Cluster_Label', '')}."
-    )
-    docs.append(Document(
-        page_content=text,
-        metadata={
-            "lokasi": row["Lokasi"],
-            "kamar_tidur": int(row["Kamar Tidur"]),
-            "kamar_mandi": int(row["Kamar Mandi"]),
-            "garasi": int(row["Garasi"]),
-            "luas_tanah": float(row["Luas Tanah"]),
-            "luas_bangunan": float(row["Luas Bangunan"]),
-            "harga": int(row["Harga"]),
-            "segment_label": str(row.get("Cluster_Label", "")),
-            "cluster_id": int(row.get("Cluster", -1)),
-        }
-    ))
-
-PGVector.from_documents(
-    documents=docs,
-    embedding=get_embeddings(),
-    collection_name="property_embeddings",
-    connection_string=os.getenv("DATABASE_URL"),
-)
-print(f"Ingested {len(docs)} property records.")
+# SESUDAH
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+df = pd.read_sql("""
+    SELECT harga, "kamarTidur" AS "Kamar Tidur",
+           "kamarMandi" AS "Kamar Mandi", garasi AS "Garasi",
+           "luasTanah" AS "Luas Tanah", "luasBangunan" AS "Luas Bangunan",
+           lokasi AS "Lokasi", "clusterLabel" AS "Cluster_Label",
+           "clusterId" AS "Cluster"
+    FROM "CleanPropertyClustering"
+    WHERE "clusterId" IS NOT NULL
+""", conn)
+conn.close()
 ```
 
-### 6.2 `scripts/ingest_knowledge.py`
+### 3.3 Update `pipelines/retrain_pipeline.py`
+
+Read from database instead of CSV:
 
 ```python
-"""
-Embed static markdown knowledge documents into pgvector.
-Run once — and re-run only when knowledge/ files are edited:
-docker exec -it hpi_api python scripts/ingest_knowledge.py
-"""
-import os
-from pathlib import Path
-from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import MarkdownTextSplitter
-from langchain_community.vectorstores import PGVector
-from rag.embedder import get_embeddings
+# SEBELUM
+df_base = pd.read_csv(DATA_PATH)
 
-KNOWLEDGE_DIR = Path("knowledge")
-splitter = MarkdownTextSplitter(chunk_size=500, chunk_overlap=50)
+# SESUDAH
+import psycopg2
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+df_base = pd.read_sql('SELECT * FROM "CleanPropertyRegression"', conn)
+df_base = df_base.rename(columns={
+    "kamarTidur": "Kamar Tidur", "kamarMandi": "Kamar Mandi",
+    "luasTanah": "Luas Tanah", "luasBangunan": "Luas Bangunan",
+    "harga": "Harga", "lokasi": "Lokasi", "garasi": "Garasi",
+})
+conn.close()
+print(f"[Retrain] Loaded {len(df_base)} rows from CleanPropertyRegression")
+```
 
-doc_type_map = {
-    "area_profiles": "area_profile",
-    "market_rules": "market_rule",
-    "faqs": "faq",
-}
+Also remove the manual outlier filtering from retrain pipeline since `CleanPropertyRegression` is already clean.
 
-all_docs = []
-for folder, doc_type in doc_type_map.items():
-    for md_file in (KNOWLEDGE_DIR / folder).glob("*.md"):
-        loader = TextLoader(str(md_file), encoding="utf-8")
-        raw_docs = loader.load()
-        chunks = splitter.split_documents(raw_docs)
-        for chunk in chunks:
-            chunk.metadata.update({
-                "doc_type": doc_type,
-                "title": md_file.stem.replace("_", " ").title(),
-                "source": str(md_file),
-            })
-        all_docs.extend(chunks)
+---
 
-PGVector.from_documents(
-    documents=all_docs,
-    embedding=get_embeddings(),
-    collection_name="knowledge_base",
-    connection_string=os.getenv("DATABASE_URL"),
-)
-print(f"Ingested {len(all_docs)} knowledge chunks.")
+## Phase 4 — Execution Order
+
+```bash
+# Step 1 — Update Prisma schema
+docker cp prisma/schema.prisma hpi_api:/app/prisma/schema.prisma
+docker exec hpi_api sh -c "prisma db push --accept-data-loss"
+
+# Step 2 — Copy scripts to container
+docker cp scripts/ingest_raw_data.py hpi_api:/app/scripts/ingest_raw_data.py
+docker cp scripts/cleaning_pipeline_regression.py hpi_api:/app/scripts/cleaning_pipeline_regression.py
+docker cp scripts/cleaning_pipeline_classification.py hpi_api:/app/scripts/cleaning_pipeline_classification.py
+docker cp scripts/cleaning_pipeline_clustering.py hpi_api:/app/scripts/cleaning_pipeline_clustering.py
+
+# Step 3 — Copy raw data to container
+docker cp data/Raw-Final-Rumah.csv hpi_api:/app/data/Raw-Final-Rumah.csv
+
+# Step 4 — Ingest raw data (parse only, no cleaning)
+docker exec -e PYTHONPATH=/app hpi_api python scripts/ingest_raw_data.py
+
+# Step 5 — Run cleaning pipelines (all three, independent)
+docker exec -e PYTHONPATH=/app hpi_api python scripts/cleaning_pipeline_regression.py
+docker exec -e PYTHONPATH=/app hpi_api python scripts/cleaning_pipeline_classification.py
+docker exec -e PYTHONPATH=/app hpi_api python scripts/cleaning_pipeline_clustering.py
+
+# Step 6 — Rebuild encoder from CleanPropertyRegression
+docker exec -e PYTHONPATH=/app hpi_api python scripts/setup_encoder.py
+
+# Step 7 — Re-ingest RAG properties from CleanPropertyClustering
+docker exec -e PYTHONPATH=/app hpi_api python scripts/ingest_properties.py
+
+# Step 8 — Restart API to reload models
+docker-compose restart api
 ```
 
 ---
 
-## Phase 7 — Docker & Infrastructure Updates
-
-### 7.1 Update `docker-compose.yml`
-
-```yaml
-api:
-  environment:
-    # ... existing vars ...
-    EMBEDDING_MODEL: text-embedding-3-small
-    RAG_ENABLED: "true"
-    RAG_TOP_K_PROPERTIES: "3"
-    RAG_TOP_K_KNOWLEDGE: "2"
-```
-
-### 7.2 Enable pgvector & Run Ingestion
+## Phase 5 — Verification
 
 ```bash
-# Step 1 — Enable pgvector extension
-docker exec -it hpi_postgres psql -U hpi -d house_price_intel \
-  -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-# Step 2 — Apply Prisma schema changes
-docker exec -it hpi_api sh -c "prisma db push --accept-data-loss"
-
-# Step 3 — Ingest static knowledge documents (fast, ~30 seconds)
-docker exec -it hpi_api python scripts/ingest_knowledge.py
-
-# Step 4 — Ingest property dataset (slow, ~20–40 min)
-docker exec -it hpi_api python scripts/ingest_properties.py
+# Check row counts in each table
+docker exec hpi_postgres psql -U hpi -d house_price_intel -c "
+SELECT
+  (SELECT COUNT(*) FROM \"RawProperty\") AS raw,
+  (SELECT COUNT(*) FROM \"CleanPropertyRegression\") AS regression,
+  (SELECT COUNT(*) FROM \"CleanPropertyClassification\") AS classification,
+  (SELECT COUNT(*) FROM \"CleanPropertyClustering\") AS clustering;
+"
 ```
+
+Expected output:
+
+| raw | regression | classification | clustering |
+|-----|-----------|----------------|------------|
+| ~40,200 | ~18,000 | ~24,000 | ~19,000 |
 
 ---
 
@@ -754,95 +613,19 @@ docker exec -it hpi_api python scripts/ingest_properties.py
 
 ```
 hpi/
-├── ...existing files...
-│
-├── rag/                              ← NEW
-│   ├── __init__.py
-│   ├── embedder.py                   ← LangChain OpenAIEmbeddings (singleton)
-│   ├── retriever.py                  ← LangChain PGVector + live SQL get_area_stats()
-│   ├── context_builder.py            ← Manual: static + dynamic context assembly
-│   └── cache.py                      ← Redis cache (1hr TTL)
-│
-├── knowledge/                        ← NEW — STATIC documents only
-│   ├── area_profiles/                ← Location, infrastructure, characteristics
-│   │   ├── cinere.md
-│   │   ├── beji.md
-│   │   ├── sawangan.md
-│   │   └── ...
-│   ├── market_rules/
-│   │   ├── pricing_factors.md
-│   │   ├── segment_definitions.md
-│   │   └── investment_guidelines.md
-│   └── faqs/
-│       ├── how_price_is_calculated.md
-│       └── model_methodology.md
+├── data/
+│   └── Raw-Final-Rumah.csv          ← Raw CSV (source of truth for initial load)
 │
 └── scripts/
-    ├── ingest_properties.py          ← NEW: embed 40K dataset → pgvector
-    ├── ingest_knowledge.py           ← NEW: embed static knowledge → pgvector
-    └── ...existing scripts...
+    ├── ingest_raw_data.py            ← NEW: CSV → RawProperty
+    ├── cleaning_pipeline_regression.py   ← NEW: RawProperty → CleanPropertyRegression
+    ├── cleaning_pipeline_classification.py ← NEW: RawProperty → CleanPropertyClassification
+    ├── cleaning_pipeline_clustering.py   ← NEW: RawProperty → CleanPropertyClustering
+    ├── setup_encoder.py              ← UPDATED: reads CleanPropertyRegression
+    ├── ingest_properties.py          ← UPDATED: reads CleanPropertyClustering
+    ├── ingest_knowledge.py           ← unchanged
+    └── predict_csv.py                ← unchanged
 ```
-
----
-
-## Updated API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/predict_price` | POST | Price estimation (unchanged) |
-| `/api/v1/classify_segment` | POST | Segment classification (unchanged) |
-| `/api/v1/cluster_property` | POST | Clustering (unchanged) |
-| `/api/v1/comparable_properties` | POST | **NEW** — Top-K similar properties via pgvector |
-| `/api/v1/feedback` | POST | Feedback (unchanged) |
-| `/api/v1/chat` | POST | Chat — **now RAG-augmented with caching** |
-| `/health` | GET | Health check (unchanged) |
-
----
-
-## Token Usage & Cost
-
-### Per Chat Request (with RAG)
-
-```
-System prompt                  ~150 tokens
-User message                   ~50 tokens
-Tool results (ML)              ~200 tokens
-Dynamic: area stats            ~80 tokens    ← live SQL, no embedding cost
-RAG: 3 comparable props        ~180 tokens
-RAG: 2 static knowledge chunks ~300 tokens
-RAG system injection           ~80 tokens
-────────────────────────────────────────
-Total per request              ~1,040 tokens ← vs ~400 without RAG (2.6x)
-```
-
-### Cost Estimate
-
-| Task | Tokens | Estimated Cost |
-|------|--------|---------------|
-| One-time: ingest 40,200 property records | ~8M tokens | ~$0.32 |
-| One-time: ingest static knowledge (~30 files) | ~150K tokens | ~$0.006 |
-| Per-query embedding (retrieval) | ~100 tokens | ~$0.000004/query |
-| Per-query GPT chat (with RAG) | ~1,040 tokens | ~$0.00015/query |
-| `get_area_stats()` per query | 0 tokens | **Free** (SQL only) |
-| **Total one-time ingestion** | | **< $0.35** |
-
-> With Redis caching (1hr TTL), repeated similar queries cost **$0** for retrieval.
-> `get_area_stats()` always free — no embedding needed, pure SQL.
-
----
-
-## Implementation Timeline
-
-| Phase | Task | Estimated Effort |
-|-------|------|-----------------|
-| Phase 1 | pgvector setup, Prisma schema, dependency install | 1 day |
-| Phase 2 | Write static knowledge documents | 1–2 days |
-| Phase 3 | `rag/embedder.py`, `rag/retriever.py` (+ `get_area_stats`), `context_builder.py`, `cache.py` | 1 day |
-| Phase 4 | Update `chat_endpoint.py` with RAG injection | 0.5 day |
-| Phase 5 | New `/comparable_properties` endpoint | 0.5 day |
-| Phase 6 | Ingest scripts + run ingestion | 1 day |
-| Phase 7 | Docker updates, end-to-end testing, prompt tuning | 1–2 days |
-| **Total** | | **~6–8 days** |
 
 ---
 
@@ -850,24 +633,22 @@ Total per request              ~1,040 tokens ← vs ~400 without RAG (2.6x)
 
 | Decision | Choice | Reason |
 |----------|--------|--------|
-| Vector DB | pgvector (extends PostgreSQL) | No new Docker service, uses existing infra |
-| Embedding model | text-embedding-3-small | Best cost/performance ratio |
-| LangChain scope | Embedder + PGVector + TextLoader only | Avoids over-engineering |
-| Knowledge content | Static only (location, infra, characteristics) | Price data handled dynamically |
-| Dynamic data | Live SQL `get_area_stats()` from `property_embeddings` | Always current, zero embedding cost |
-| RAG trigger | Keyword-based conditional | Avoids token waste on non-property queries |
-| Caching | Redis 1hr TTL | Eliminates redundant calls |
-| Context size | 3 comparables + 2 knowledge chunks + area stats | Balances quality vs token cost |
-| Knowledge update | Edit `.md` → re-run `ingest_knowledge.py` | Simple, version-controlled in Git |
+| Separate clean tables | One per model | Each model has different cleaning — cannot share |
+| Raw table | Keep all 40,200 rows | Audit trail, re-run cleaning anytime |
+| CSV file | Keep in `data/` | Needed for initial `ingest_raw_data.py` run |
+| Retrain source | `CleanPropertyRegression` | Most conservative cleaning = best model quality |
+| RAG source | `CleanPropertyClustering` | Contains cluster labels needed for comparable search |
+| Encoder source | `CleanPropertyRegression` | TargetEncoder trained on same data as regression model |
 
 ---
 
-## Environment Variables to Add
+## Implementation Timeline
 
-```env
-# .env.example additions
-EMBEDDING_MODEL=text-embedding-3-small
-RAG_ENABLED=true
-RAG_TOP_K_PROPERTIES=3
-RAG_TOP_K_KNOWLEDGE=2
-```
+| Phase | Task | Estimated Effort |
+|-------|------|-----------------|
+| Phase 1 | Update Prisma schema + push | 0.5 day |
+| Phase 2 | Write & test 4 new scripts | 1 day |
+| Phase 3 | Update 3 existing scripts | 0.5 day |
+| Phase 4 | Run full pipeline end-to-end | 0.5 day |
+| Phase 5 | Verify row counts + test API | 0.5 day |
+| **Total** | | **~3 days** |

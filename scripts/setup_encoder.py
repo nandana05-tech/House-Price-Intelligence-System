@@ -1,43 +1,43 @@
 """
-Setup script — rebuilds the target_encoder.pkl from data_with_clusters.csv.
-The Lokasi_enc column is log(mean_harga) per lokasi, precomputed during training.
-This script builds a lookup dict and saves it as target_encoder.pkl.
+Setup script — rebuilds target_encoder.pkl using category_encoders.TargetEncoder
+to match the training pipeline behavior.
 
 Run once:
-    python setup_encoder.py
+    python scripts/setup_encoder.py
 """
+import os
 import pickle
 from pathlib import Path
 
+import category_encoders as ce
 import numpy as np
 import pandas as pd
+import psycopg2
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
+OUT_PATH = BASE_DIR / "models" / "target_encoder.pkl"
 
-print("Loading data...")
-df = pd.read_csv(BASE_DIR / "data_with_clusters.csv")
+print("Loading data from CleanPropertyRegression...")
+conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+df = pd.read_sql('SELECT * FROM "CleanPropertyRegression"', conn)
+df = df.rename(columns={"harga": "Harga", "lokasi": "Lokasi"})
+conn.close()
 print("  Rows:", len(df))
 
-# Build per-lokasi mean of Lokasi_enc (should be stable per group)
-lokasi_enc_map = df.groupby("Lokasi")["Lokasi_enc"].mean().to_dict()
+# Train target encoder on log target to match regression training
+y = np.log1p(df["Harga"])
+te = ce.TargetEncoder(cols=["Lokasi"], smoothing=10)
+te.fit(df[["Lokasi"]], y)
 
-# Global fallback: mean of all Lokasi_enc values
-fallback = float(df["Lokasi_enc"].mean())
+with open(OUT_PATH, "wb") as f:
+    pickle.dump(te, f)
 
-encoder_artifact = {
-    "type": "lokasi_enc_lookup",
-    "map": lokasi_enc_map,
-    "fallback": fallback,
-}
-
-out_path = BASE_DIR / "target_encoder.pkl"
-with open(out_path, "wb") as f:
-    pickle.dump(encoder_artifact, f)
-print("Saved rebuilt target_encoder.pkl")
+print(f"Saved TargetEncoder object to: {OUT_PATH}")
 
 # Verification
-for loc in ["Cinere", "Sawangan", "Beji", "UNKNOWN"]:
-    val = lokasi_enc_map.get(loc, fallback)
-    print(f"  {loc:25s} -> {val:.4f}")
+test_lokasi = pd.DataFrame({"Lokasi": ["Cinere", "Sawangan", "Beji", "UNKNOWN"]})
+encoded = te.transform(test_lokasi)["Lokasi"].tolist()
+for loc, val in zip(test_lokasi["Lokasi"], encoded, strict=False):
+    print(f"  {loc:25s} -> {float(val):.6f}")
 
 print("Done. You can now run: python server.py")

@@ -92,8 +92,8 @@ def classify_segment(
         kamar_tidur, kamar_mandi, garasi, luas_tanah, luas_bangunan, lokasi, harga
     )
 
-    kelas_id = int(models.model_clf.predict(X)[0])
-    proba = models.model_clf.predict_proba(X)[0].tolist()
+    kelas_id = int(models.model_clf.predict(X.values).flatten()[0])
+    proba = models.model_clf.predict_proba(X.values)[0].tolist()
     kelas_label = models.meta_klasifikasi["kelas"][str(kelas_id)]
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)

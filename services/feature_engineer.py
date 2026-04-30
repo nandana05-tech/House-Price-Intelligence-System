@@ -29,7 +29,11 @@ def engineer_regression_features(
     lokasi: str,
 ) -> pd.DataFrame:
     """Return a single-row DataFrame ready for the CatBoost regression models."""
-    lokasi_target = models.target_encoder["map"].get(lokasi, models.target_encoder["fallback"])
+    lokasi_target = float(
+        models.target_encoder.transform(
+            pd.DataFrame({"Lokasi": [lokasi]})
+        )["Lokasi"].iloc[0]
+    )
 
     row = {
         "Kamar Tidur": kamar_tidur,
@@ -39,7 +43,26 @@ def engineer_regression_features(
         "Luas Bangunan": luas_bangunan,
         "Lokasi_Target": lokasi_target,
     }
-    return pd.DataFrame([row])[models.meta_regresi["fitur"]]
+    df = pd.DataFrame([row])
+
+    # Tambahkan fitur yang sama dengan training
+    df['total_kamar']        = df['Kamar Tidur'] + df['Kamar Mandi']
+    df['kamar_ratio']        = df['Kamar Tidur'] / (df['Kamar Mandi'] + 1)
+    df['garasi_kamar']       = df['Garasi'] * df['total_kamar']
+    df['luxury_score']       = df['Kamar Tidur'] * df['Kamar Mandi'] * (df['Garasi'] + 1)
+    df['rasio_bang_tanah']   = df['Luas Bangunan'] / (df['Luas Tanah'] + 1)
+    df['luas_per_kamar']     = df['Luas Bangunan'] / (df['total_kamar'] + 1)
+    df['luas_total']         = df['Luas Tanah'] + df['Luas Bangunan']
+    df['log_luas_tanah']     = np.log1p(df['Luas Tanah'])
+    df['log_luas_bangunan']  = np.log1p(df['Luas Bangunan'])
+    df['log_lokasi']         = np.log1p(df['Lokasi_Target'])
+    df['lokasi_x_kamar']     = df['Lokasi_Target'] * df['total_kamar']
+    df['lokasi_x_garasi']    = df['Lokasi_Target'] * df['Garasi']
+    df['lokasi_x_luxury']    = df['log_lokasi'] * df['luxury_score']
+    df['lokasi_x_luas_bang'] = df['log_lokasi'] * df['log_luas_bangunan']
+    df['lokasi_per_kamar']   = df['Lokasi_Target'] / (df['total_kamar'] + 1)
+
+    return df[models.meta_regresi["fitur"]]
 
 
 # ── Classification ─────────────────────────────────────────────────────────
@@ -54,22 +77,24 @@ def engineer_classification_features(
     harga: float,
 ) -> pd.DataFrame:
     """Return a single-row DataFrame ready for the CatBoost classifier."""
-    lt = luas_tanah if luas_tanah > 0 else 1
-    lb = luas_bangunan if luas_bangunan > 0 else 1
+    lt_log = np.log1p(luas_tanah)
+    lb_log = np.log1p(luas_bangunan)
+    lt_raw = luas_tanah if luas_tanah > 0 else 1   # untuk harga per m2
+    lb_raw = luas_bangunan if luas_bangunan > 0 else 1
     total_kamar = kamar_tidur + kamar_mandi
 
     row: dict = {
         "Kamar Tidur": kamar_tidur,
         "Kamar Mandi": kamar_mandi,
         "Garasi": garasi,
-        "Luas Tanah": luas_tanah,
-        "Luas Bangunan": luas_bangunan,
-        "rasio_bangunan_tanah": lb / lt,
+        "Luas Tanah": lt_log,
+        "Luas Bangunan": lb_log,
+        "rasio_bangunan_tanah": lb_log / lt_log,
         "total_kamar": total_kamar,
-        "harga_per_m2_tanah": harga / lt,
-        "harga_per_m2_bangunan": harga / lb,
-        "luas_total": lt + lb,
-        "kamar_per_luas": total_kamar / lb,
+        "harga_per_m2_tanah": harga / lt_raw,
+        "harga_per_m2_bangunan": harga / lb_raw,
+        "luas_total": lt_raw + lb_raw,
+        "kamar_per_luas": total_kamar / lb_raw,
         "garasi_flag": 1 if garasi > 0 else 0,
     }
 
@@ -93,7 +118,11 @@ def engineer_clustering_features(
     """Return a single-row DataFrame ready for the UMAP + KMeans pipeline."""
     lt = luas_tanah if luas_tanah > 0 else 1
 
-    lokasi_enc = models.target_encoder["map"].get(lokasi, models.target_encoder["fallback"])
+    lokasi_enc = float(
+        models.target_encoder.transform(
+            pd.DataFrame({"Lokasi": [lokasi]})
+        )["Lokasi"].iloc[0]
+    )
 
     row = {
         "log_Harga": np.log1p(harga),

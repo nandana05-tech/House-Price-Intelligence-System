@@ -14,6 +14,7 @@ from pathlib import Path
 import mlflow
 import numpy as np
 import pandas as pd
+import psycopg2
 from catboost import CatBoostRegressor, Pool
 from dotenv import load_dotenv
 from sklearn.model_selection import train_test_split
@@ -21,7 +22,6 @@ from sklearn.model_selection import train_test_split
 load_dotenv()
 
 BASE_DIR = Path(__file__).parent.parent
-DATA_PATH = BASE_DIR / "data_with_clusters.csv"
 PRICE_THRESHOLD = 1_200_000_000.0
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
@@ -37,9 +37,21 @@ async def run_retrain(
     t_start = time.perf_counter()
 
     try:
-        # 1. Load original training data
-        print("[Retrain] Loading base training data...")
-        df_base = pd.read_csv(DATA_PATH)
+        # 1. Load original training data from database
+        print("[Retrain] Loading base training data from CleanPropertyRegression...")
+        conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+        df_base = pd.read_sql('SELECT * FROM "CleanPropertyRegression"', conn)
+        df_base = df_base.rename(columns={
+            "kamarTidur": "Kamar Tidur",
+            "kamarMandi": "Kamar Mandi",
+            "luasTanah": "Luas Tanah",
+            "luasBangunan": "Luas Bangunan",
+            "harga": "Harga",
+            "lokasi": "Lokasi",
+            "garasi": "Garasi",
+        })
+        conn.close()
+        print(f"[Retrain] Loaded {len(df_base)} rows from CleanPropertyRegression")
 
         # 2. Load feedback rows from DB
         print(f"[Retrain] Loading {len(feedback_ids)} feedback rows...")
@@ -96,33 +108,40 @@ async def run_retrain(
 
 def _train_and_evaluate(df: pd.DataFrame) -> float:
     """Synchronous training routine — returns overall MAPE on test set."""
+    from services.feature_engineer import engineer_regression_features
     from services.model_loader import models
 
     models.load()
 
-    # Apply target encoding lookup
-    df_enc = df.copy()
-    df_enc["Lokasi_Target"] = df_enc["Lokasi"].apply(
-        lambda loc: models.target_encoder["map"].get(loc, models.target_encoder["fallback"])
-    )
-
-    feature_cols = ["Kamar Tidur", "Kamar Mandi", "Garasi", "Luas Tanah", "Luas Bangunan", "Lokasi_Target"]
-    X = df_enc[feature_cols]
-    y = np.log1p(df_enc["Harga"])  # Train on log price
+    # Build regression features with the same logic used in production inference
+    X = pd.DataFrame(
+        [
+            engineer_regression_features(
+                kamar_tidur=int(row["Kamar Tidur"]),
+                kamar_mandi=int(row["Kamar Mandi"]),
+                garasi=int(row["Garasi"]),
+                luas_tanah=float(row["Luas Tanah"]),
+                luas_bangunan=float(row["Luas Bangunan"]),
+                lokasi=str(row["Lokasi"]),
+            ).iloc[0].to_dict()
+            for _, row in df.iterrows()
+        ]
+    )[models.meta_regresi["fitur"]]
+    y = np.log1p(df["Harga"])  # Train on log price
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # Split by threshold using actual prices
-    harga_asli = df_enc["Harga"].iloc[y_train.index]
+    harga_asli = df["Harga"].iloc[y_train.index]
     mask_low_train = harga_asli <= PRICE_THRESHOLD
-    
-    harga_asli_test = df_enc["Harga"].iloc[y_test.index]
+
+    harga_asli_test = df["Harga"].iloc[y_test.index]
     mask_low_test = harga_asli_test <= PRICE_THRESHOLD
 
     mapes = []
     with mlflow.start_run(run_name="retrain_regression"):
         mlflow.log_param("total_rows", len(df))
-        mlflow.log_param("feedback_rows", len(df) - 18_695)  # approx original count
+        mlflow.log_param("feedback_rows", max(len(df) - len(X_train) - len(X_test), 0))
 
         for mask_train, mask_test, model_name, save_name in [
             (mask_low_train, mask_low_test, "model_low", "model_low.cbm"),

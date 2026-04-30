@@ -97,3 +97,93 @@ model KnowledgeBase {
   source    String?
   createdAt DateTime @default(now())
 }
+
+// Raw data — stores parsed but uncleaned data
+model RawProperty {
+  id           Int      @id @default(autoincrement())
+  harga        Float?
+  kamarTidur   Int?
+  kamarMandi   Int?
+  garasi       Int      @default(0)
+  luasTanah    Float?
+  luasBangunan Float?
+  lokasi       String
+  createdAt    DateTime @default(now())
+}
+
+// Clean data for regression model
+model CleanPropertyRegression {
+  id           Int      @id @default(autoincrement())
+  harga        Float
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+  createdAt    DateTime @default(now())
+}
+
+// Clean data for classification model
+model CleanPropertyClassification {
+  id           Int      @id @default(autoincrement())
+  harga        Float
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+  kelasHarga   Int      // 0=Murah, 1=Menengah, 2=Atas, 3=Mewah
+  createdAt    DateTime @default(now())
+}
+
+// Clean data for clustering model (includes engineered features)
+model CleanPropertyClustering {
+  id           Int      @id @default(autoincrement())
+  harga        Float
+  kamarTidur   Int
+  kamarMandi   Int
+  garasi       Int
+  luasTanah    Float
+  luasBangunan Float
+  lokasi       String
+  logHarga     Float
+  logLT        Float
+  logLB        Float
+  hargaPerM2   Float
+  logHargaM2   Float
+  rasioLBLT    Float
+  lokasi_enc   Float
+  clusterId    Int?
+  clusterLabel String?
+  createdAt    DateTime @default(now())
+}
+
+model LangchainPgCollection {
+  dummy String @id @default("ignore")
+
+  @@map("langchain_pg_collection")
+  @@ignore
+}
+
+model LangchainPgEmbedding {
+  dummy String @id @default("ignore")
+
+  @@map("langchain_pg_embedding")
+  @@ignore
+}
+
+model AlembicVersion {
+  dummy String @id @default("ignore")
+
+  @@map("alembic_version")
+  @@ignore
+}
+
+model MlflowExperiment {
+  dummy String @id @default("ignore")
+
+  @@map("experiments")
+  @@ignore
+}

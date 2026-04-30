@@ -1,13 +1,13 @@
 """
 Two retrieval strategies:
 1. Static: LangChain PGVector for knowledge_base (area profiles, rules, FAQs)
-2. Dynamic: Raw SQL on property_embeddings for live price statistics
+2. Dynamic: Raw SQL on langchain_pg_embedding.cmetadata for live price statistics
 """
 from __future__ import annotations
 import os
 import psycopg2
 from pgvector.psycopg2 import register_vector
-from langchain_community.vectorstores import PGVector
+from langchain_postgres.vectorstores import PGVector   # ← fixed import
 from rag.embedder import get_embeddings
 
 CONNECTION_STRING = os.getenv("DATABASE_URL", "")
@@ -23,9 +23,10 @@ def _get_property_store() -> PGVector:
     global _property_store
     if _property_store is None:
         _property_store = PGVector(
-            connection_string=CONNECTION_STRING,
-            embedding_function=get_embeddings(),
+            embeddings=get_embeddings(),               # ← param renamed
             collection_name="property_embeddings",
+            connection=CONNECTION_STRING,              # ← param renamed
+            use_jsonb=True,
         )
     return _property_store
 
@@ -34,9 +35,10 @@ def _get_knowledge_store() -> PGVector:
     global _knowledge_store
     if _knowledge_store is None:
         _knowledge_store = PGVector(
-            connection_string=CONNECTION_STRING,
-            embedding_function=get_embeddings(),
+            embeddings=get_embeddings(),               # ← param renamed
             collection_name="knowledge_base",
+            connection=CONNECTION_STRING,              # ← param renamed
+            use_jsonb=True,
         )
     return _knowledge_store
 
@@ -69,7 +71,7 @@ def get_knowledge(query: str, top_k: int = 2) -> list[dict]:
     return [
         {
             "title": doc.metadata.get("title", ""),
-            "content": doc.page_content[:300],   # truncate — token efficient
+            "content": doc.page_content[:300],
             "doc_type": doc.metadata.get("doc_type", ""),
             "similarity": round(1 - score, 4),
         }
@@ -89,31 +91,35 @@ def _get_pg_conn():
 
 def get_area_stats(lokasi: str) -> dict:
     """
-    Compute live price statistics directly from property_embeddings.
-    Always up-to-date — no manual knowledge update needed.
-    Returns empty dict if lokasi not found.
+    Compute live price statistics from cmetadata JSONB inside langchain_pg_embedding.
+    Joins langchain_pg_collection to filter by collection name.
     """
     try:
         conn = _get_pg_conn()
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
-                    AVG(harga)::BIGINT         AS avg_harga,
-                    MIN(harga)                 AS min_harga,
-                    MAX(harga)                 AS max_harga,
-                    COUNT(*)                   AS jumlah_data,
-                    MODE() WITHIN GROUP (ORDER BY segment_label) AS dominant_segment
-                FROM property_embeddings
-                WHERE lokasi = %s
+                    AVG((e.cmetadata->>'harga')::BIGINT)::BIGINT  AS avg_harga,
+                    MIN((e.cmetadata->>'harga')::BIGINT)          AS min_harga,
+                    MAX((e.cmetadata->>'harga')::BIGINT)          AS max_harga,
+                    COUNT(*)                                       AS jumlah_data,
+                    MODE() WITHIN GROUP (
+                        ORDER BY e.cmetadata->>'segment_label'
+                    )                                              AS dominant_segment
+                FROM langchain_pg_embedding e
+                JOIN langchain_pg_collection c
+                    ON e.collection_id = c.uuid
+                WHERE c.name = 'property_embeddings'
+                  AND e.cmetadata->>'lokasi' = %s
             """, (lokasi,))
             row = cur.fetchone()
         if not row or row[3] == 0:
             return {}
         return {
-            "avg_harga": row[0],
-            "min_harga": row[1],
-            "max_harga": row[2],
-            "jumlah_data": row[3],
+            "avg_harga":        row[0],
+            "min_harga":        row[1],
+            "max_harga":        row[2],
+            "jumlah_data":      row[3],
             "dominant_segment": row[4],
         }
     except Exception:
