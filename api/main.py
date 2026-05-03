@@ -17,17 +17,27 @@ from api.chat_endpoint import router as chat_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # ── Startup ───────────────────────────────────────────────────────────
     from prisma import Prisma
     from services.model_loader import models
-    
-    models.load()  # Load ML models into memory
-    
+    try:
+        models.load()
+        print("[API] ML models loaded successfully")
+    except Exception as e:
+        # Jangan crash — /health harus tetap respond agar healthcheck Docker tidak gagal.
+        # Model akan dicoba dimuat ulang saat request pertama masuk melalui model_loader.
+        print(f"[API] WARNING: ML model loading failed at startup: {e}")
+
     app.state.db = Prisma()
     await app.state.db.connect()
+    print("[API] Database connected")
+
     yield
-    # Shutdown
+
+    # ── Shutdown ──────────────────────────────────────────────────────────
     await app.state.db.disconnect()
+    print("[API] Database disconnected")
+
 
 
 app = FastAPI(

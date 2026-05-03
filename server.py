@@ -186,6 +186,7 @@ async def cluster_property(
     kamar_mandi: Annotated[int, "Jumlah kamar mandi"],
     lokasi: Annotated[str, "Nama kecamatan/area di Depok"],
     harga: Annotated[Optional[float], "Harga properti (IDR). Jika kosong, akan diestimasi otomatis."] = None,
+    garasi: Annotated[int, "Kapasitas garasi (0-5 mobil). Default 0."] = 0,
     ctx: Context = None,
 ) -> dict:
     """
@@ -202,7 +203,7 @@ async def cluster_property(
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: _cluster(luas_tanah, luas_bangunan, kamar_tidur, kamar_mandi, lokasi, harga),
+        lambda: _cluster(luas_tanah, luas_bangunan, kamar_tidur, kamar_mandi, lokasi, harga, garasi),
     )
 
     if ctx:

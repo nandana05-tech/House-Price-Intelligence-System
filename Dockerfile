@@ -1,4 +1,4 @@
-FROM python:3.14-rc-slim AS builder
+FROM python:3.12-slim AS builder
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -16,7 +16,7 @@ COPY pyproject.toml uv.lock ./
 RUN pip install uv && uv pip install --system --no-cache -e .
 
 # Production stage
-FROM python:3.14-rc-slim AS production
+FROM python:3.12-slim AS production
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -40,4 +40,7 @@ RUN test -d metadata || (echo "ERROR: folder metadata/ tidak ditemukan" && exit 
 RUN prisma generate
 
 EXPOSE 8080
-CMD ["sleep", "infinity"]
+
+# Default CMD: jalankan FastAPI. Setiap service di docker-compose
+# bisa override command ini sesuai kebutuhan (mcp_server, consumer_*, dll).
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

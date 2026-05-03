@@ -160,20 +160,6 @@ model CleanPropertyClustering {
   createdAt    DateTime @default(now())
 }
 
-model LangchainPgCollection {
-  dummy String @id @default("ignore")
-
-  @@map("langchain_pg_collection")
-  @@ignore
-}
-
-model LangchainPgEmbedding {
-  dummy String @id @default("ignore")
-
-  @@map("langchain_pg_embedding")
-  @@ignore
-}
-
 model AlembicVersion {
   dummy String @id @default("ignore")
 

@@ -16,9 +16,6 @@ from services.feature_engineer import (
 )
 from services.model_loader import models
 
-# Boundary between low-price and high-price regression model (IDR)
-PRICE_THRESHOLD: float = 1_200_000_000.0
-
 
 # ── Regression ─────────────────────────────────────────────────────────────
 
@@ -32,27 +29,50 @@ def predict_price(
 ) -> dict:
     """
     Dual-model CatBoost price regression.
-    Uses model_low for ≤ 1.2B IDR segment, model_high otherwise.
-    Returns a first-pass prediction with model_low to determine which model to use.
+
+    Strategi:
+      1. First-pass dengan model_low untuk estimasi awal harga
+      2. Jika estimasi ≤ batas_segmen → gunakan model_low (final)
+         Jika estimasi  > batas_segmen → gunakan model_high (final)
+
+    Batas segmen dibaca dari meta_regresi["batas_segmen"] (single source of truth),
+    sehingga selalu sinkron dengan model yang di-train.
     """
     t0 = time.perf_counter()
+
+    # Baca batas segmen dari metadata — TIDAK hardcoded
+    batas_segmen = float(models.meta_regresi["batas_segmen"])
+    # Blending zone: ±5% di sekitar batas agar tidak ada cliff-effect
+    blend_margin = batas_segmen * 0.05
+
     X = engineer_regression_features(
         kamar_tidur, kamar_mandi, garasi, luas_tanah, luas_bangunan, lokasi
     )
 
-    # First-pass with low model to determine segment
-    log_harga_low = float(models.model_low.predict(X)[0])
-    harga_low = float(np.expm1(log_harga_low))
+    # First-pass dengan model_low untuk menentukan segmen
+    log_harga_low  = float(models.model_low.predict(X)[0])
+    harga_low      = float(np.expm1(log_harga_low))
+    log_harga_high = float(models.model_high.predict(X)[0])
+    harga_high     = float(np.expm1(log_harga_high))
 
-    if harga_low <= PRICE_THRESHOLD:
-        harga_final = harga_low
+    if harga_low < batas_segmen - blend_margin:
+        # Jelas di segmen bawah
+        harga_final    = harga_low
         model_digunakan = "model_low"
         mape = models.meta_regresi["model_low"]["mape"]
-    else:
-        log_harga_high = float(models.model_high.predict(X)[0])
-        harga_final = float(np.expm1(log_harga_high))
+    elif harga_low > batas_segmen + blend_margin:
+        # Jelas di segmen atas
+        harga_final    = harga_high
         model_digunakan = "model_high"
         mape = models.meta_regresi["model_high"]["mape"]
+    else:
+        # Blending zone: weighted average berdasarkan jarak ke batas
+        ratio_high = (harga_low - (batas_segmen - blend_margin)) / (2 * blend_margin)
+        ratio_high = max(0.0, min(1.0, ratio_high))
+        harga_final    = harga_low * (1 - ratio_high) + harga_high * ratio_high
+        model_digunakan = "blended"
+        mape = (models.meta_regresi["model_low"]["mape"] * (1 - ratio_high)
+                + models.meta_regresi["model_high"]["mape"] * ratio_high)
 
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
     return {
@@ -60,7 +80,7 @@ def predict_price(
         "harga_estimasi_format": _format_rupiah(harga_final),
         "model_digunakan": model_digunakan,
         "mape_persen": mape,
-        "batas_segmen_idr": PRICE_THRESHOLD,
+        "batas_segmen_idr": batas_segmen,
         "latency_ms": latency_ms,
     }
 
@@ -78,7 +98,9 @@ def classify_segment(
 ) -> dict:
     """
     4-class price segment classifier (CatBoost).
-    If `harga` is not provided, it is estimated first via the regression model.
+
+    Jika `harga` tidak diberikan, estimasi harga diperoleh dari model regresi
+    terlebih dahulu, kemudian digunakan sebagai fitur klasifikasi.
     """
     t0 = time.perf_counter()
 
@@ -120,18 +142,22 @@ def cluster_property(
     kamar_mandi: int,
     lokasi: str,
     harga: float | None = None,
-    garasi: int = 0
+    garasi: int = 0,
 ) -> dict:
     """
     KMeans + UMAP clustering (6 clusters).
-    If `harga` is not provided, it is estimated via regression first.
+
+    Jika `harga` tidak diberikan, estimasi harga diperoleh dari model regresi
+    terlebih dahulu, kemudian digunakan sebagai fitur clustering.
     """
     t0 = time.perf_counter()
 
     harga_sumber = "input"
     if harga is None:
-        reg = predict_price(kamar_tidur, kamar_mandi, garasi=garasi, luas_tanah=luas_tanah,
-                            luas_bangunan=luas_bangunan, lokasi=lokasi)
+        reg = predict_price(
+            kamar_tidur, kamar_mandi, garasi=garasi,
+            luas_tanah=luas_tanah, luas_bangunan=luas_bangunan, lokasi=lokasi
+        )
         harga = reg["harga_estimasi"]
         harga_sumber = "estimated_by_regression"
 
@@ -141,15 +167,16 @@ def cluster_property(
 
     # Scale → UMAP → KMeans
     X_scaled = models.scaler.transform(X_raw)
-    X_umap = models.umap.transform(X_scaled)
+    X_umap   = models.umap.transform(X_scaled)
     cluster_id = int(models.kmeans.predict(X_umap)[0])
 
-    label_map: dict = models.meta_clustering["label_map"]
+    label_map: dict = models.meta_clustering.get("label_map", {})
     cluster_label = label_map.get(str(cluster_id), f"Cluster-{cluster_id}")
 
     # Find cluster summary from metadata
     summary = next(
-        (c for c in models.meta_clustering["cluster_summary"] if c["cluster_id"] == cluster_id),
+        (c for c in models.meta_clustering.get("cluster_summary", [])
+         if c["cluster_id"] == cluster_id),
         {},
     )
 
@@ -168,7 +195,7 @@ def cluster_property(
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _format_rupiah(nilai: float) -> str:
-    """Format angka ke string Rupiah yang mudah dibaca (e.g. 'Rp 1,25 M')."""
+    """Format angka ke string Rupiah yang mudah dibaca (e.g. 'Rp 1,25 Miliar')."""
     if nilai >= 1_000_000_000:
         return f"Rp {nilai / 1_000_000_000:.2f} Miliar"
     elif nilai >= 1_000_000:

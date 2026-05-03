@@ -5,12 +5,15 @@ Two retrieval strategies:
 """
 from __future__ import annotations
 import os
+import re
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from langchain_postgres.vectorstores import PGVector   # ← fixed import
 from rag.embedder import get_embeddings
 
 CONNECTION_STRING = os.getenv("DATABASE_URL", "")
+# langchain-postgres requires the psycopg3 driver prefix.
+PGVECTOR_URL = re.sub(r"^postgresql(\+psycopg2)?", "postgresql+psycopg", CONNECTION_STRING)
 
 _property_store: PGVector | None = None
 _knowledge_store: PGVector | None = None
@@ -25,7 +28,7 @@ def _get_property_store() -> PGVector:
         _property_store = PGVector(
             embeddings=get_embeddings(),               # ← param renamed
             collection_name="property_embeddings",
-            connection=CONNECTION_STRING,              # ← param renamed
+            connection=PGVECTOR_URL,                   # ← fixed: connection_string → connection
             use_jsonb=True,
         )
     return _property_store
@@ -37,7 +40,7 @@ def _get_knowledge_store() -> PGVector:
         _knowledge_store = PGVector(
             embeddings=get_embeddings(),               # ← param renamed
             collection_name="knowledge_base",
-            connection=CONNECTION_STRING,              # ← param renamed
+            connection=PGVECTOR_URL,                   # ← fixed: connection_string → connection
             use_jsonb=True,
         )
     return _knowledge_store

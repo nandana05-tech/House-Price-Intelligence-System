@@ -12,18 +12,26 @@ Fix notes:
 - Column names aligned to exact Prisma schema field names.
 """
 import os
+import re
 
 import pandas as pd
-import psycopg2
+from sqlalchemy import create_engine
 from langchain_postgres.vectorstores import PGVector
 from langchain_core.documents import Document
 
 from rag.embedder import get_embeddings
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Build a psycopg3-compatible URL for langchain-postgres PGVector.
+# The env var uses the plain "postgresql://" scheme; PGVector requires
+# "postgresql+psycopg://" (psycopg3 driver).
+PGVECTOR_URL = re.sub(r"^postgresql(\+psycopg2)?", "postgresql+psycopg", DATABASE_URL)
+
+# SQLAlchemy engine for pandas (silences the DBAPI2 UserWarning).
+_engine = create_engine(re.sub(r"^postgresql(\+psycopg2)?", "postgresql+psycopg2", DATABASE_URL))
 
 # ── 1. Load data ────────────────────────────────────────────────────────────
-conn = psycopg2.connect(DATABASE_URL)
 
 # Option A: Use CleanPropertyClustering (all rows, clusterId optional)
 df = pd.read_sql(
@@ -41,7 +49,7 @@ df = pd.read_sql(
         "clusterLabel"
     FROM "CleanPropertyClustering"
     """,
-    conn,
+    _engine,
 )
 
 # Option B (fallback): Use CleanPropertyRegression if clustering table is empty
@@ -62,10 +70,10 @@ if df.empty:
             NULL::text   AS "clusterLabel"
         FROM "CleanPropertyRegression"
         """,
-        conn,
+        _engine,
     )
 
-conn.close()
+_engine.dispose()
 
 print(f"Rows loaded: {len(df)}")
 if df.empty:
@@ -109,7 +117,7 @@ print(f"Documents prepared: {len(docs)}")
 vectorstore = PGVector(
     embeddings=get_embeddings(),
     collection_name="property_embeddings",
-    connection=DATABASE_URL,
+    connection=PGVECTOR_URL,
     use_jsonb=True,
 )
 

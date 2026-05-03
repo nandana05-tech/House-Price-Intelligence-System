@@ -3,9 +3,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Services:
 #   kafka      — KRaft mode (no Zookeeper), port 9092
-#   postgresql — primary datastore,        port 5432
+#   postgresql — primary datastore,        port 5435 (host) → 5432 (container)
 #   redis      — prediction cache,         port 6379
 #   mlflow     — experiment tracking UI,   port 5000
+#   init       — one-shot bootstrap (ingest data, migrate DB), lalu exit
+#   api        — FastAPI REST + ML inference, port 8080
+#   mcp_server — FastMCP (StreamableHTTP), port 8000
+#   frontend   — Next.js UI,              port 3000
+#   nginx      — reverse proxy,           port 80 (public)
+#   consumer_* — Kafka ML pods (background)
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -26,15 +32,15 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      # KAFKA_LOG_DIRS: /var/kraft-combined-logs
       CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"
     volumes:
       - kafka_data:/var/kraft-combined-logs
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - hpi-network
 
@@ -58,7 +64,7 @@ services:
     networks:
       - hpi-network
 
-  # ── Redis (cache) ────────────────────────────────────────────────────────
+  # ── Redis (prediction cache) ─────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: hpi_redis
@@ -73,8 +79,6 @@ services:
       retries: 5
     networks:
       - hpi-network
-
-
 
   # ── MLflow Tracking Server ───────────────────────────────────────────────
   mlflow:
@@ -95,12 +99,54 @@ services:
     networks:
       - hpi-network
 
+  # ── One-shot DB bootstrap ────────────────────────────────────────────────
+  # Jalankan sekali saat pertama deploy (atau saat data perlu di-refresh).
+  # Exit 0 setelah selesai — tidak restart.
+  # Service lain (api, mcp_server, consumer_*) menunggu init selesai.
+  init:
+    build: .
+    container_name: hpi_init
+    environment:
+      DATABASE_URL: postgresql://hpi:hpi_secret@postgresql:5432/house_price_intel
+      PYTHONPATH: /app
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+    command: >
+      sh -c "
+        echo '[hpi_init] Step 1/7 — Migrate database schema...' &&
+        prisma db push --accept-data-loss &&
+        echo '[hpi_init] Step 2/7 — Ingest raw data...' &&
+        python scripts/ingest_raw_data.py &&
+        echo '[hpi_init] Step 3/7 — Clean data (regresi)...' &&
+        python scripts/cleaning_pipeline_regression.py &&
+        echo '[hpi_init] Step 4/7 — Clean data (klasifikasi)...' &&
+        python scripts/cleaning_pipeline_classification.py &&
+        echo '[hpi_init] Step 5/7 — Clean data (clustering)...' &&
+        python scripts/cleaning_pipeline_clustering.py &&
+        echo '[hpi_init] Step 6/7 — Setup encoder...' &&
+        python scripts/setup_encoder.py &&
+        echo '[hpi_init] Step 7/7 — Ingest RAG knowledge...' &&
+        python scripts/ingest_properties.py &&
+        python scripts/ingest_knowledge.py &&
+        echo '[hpi_init] Bootstrap selesai!'
+      "
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - hpi-network
+    restart: "no"
+
   # ── HPI API (FastAPI) ────────────────────────────────────────────────────
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: hpi_api
-    # ports:
-    #   - "8080:8080"
+    ports:
+      - "8080:8080"   # exposed for direct debugging; nginx handles port 80
     environment:
       DATABASE_URL: postgresql://hpi:hpi_secret@postgresql:5432/house_price_intel
       REDIS_URL: redis://redis:6379/0
@@ -121,24 +167,31 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+      init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 20s
     networks:
       - hpi-network
 
-  # ── MCP Server ───────────────────────────────────────────────────────────
+  # ── MCP Server (FastMCP StreamableHTTP) ──────────────────────────────────
   mcp_server:
     build: .
     container_name: hpi_mcp_server
+    ports:
+      - "8000:8000"   # exposed for direct MCP client access
     environment:
       DATABASE_URL: postgresql://hpi:hpi_secret@postgresql:5432/house_price_intel
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MLFLOW_TRACKING_URI: http://mlflow:5000
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      KAFKA_ENABLED: "true"
+      MCP_PORT: "8000"
     command: python server.py
     depends_on:
       postgresql:
@@ -149,10 +202,60 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     networks:
       - hpi-network
 
-  # ── ML Consumer Pods ─────────────────────────────────────────────────────
+  # ── Next.js Frontend ─────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hpi_frontend
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://nginx/api/v1
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - hpi-network
+
+  # ── Nginx (reverse proxy) ─────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: hpi_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - hpi-network
+
+  # ── ML Consumer Pods ──────────────────────────────────────────────────────
   consumer_regression:
     build: .
     container_name: hpi_consumer_regression
@@ -169,6 +272,9 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
     networks:
       - hpi-network
 
@@ -188,6 +294,9 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
     networks:
       - hpi-network
 
@@ -207,6 +316,9 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
     networks:
       - hpi-network
 
@@ -218,6 +330,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      RETRAIN_FEEDBACK_THRESHOLD: "100"
     command: python -m kafka.consumer_feedback
     depends_on:
       postgresql:
@@ -226,19 +339,9 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_started
-    networks:
-      - hpi-network
-
-  nginx:
-    image: nginx:alpine
-    container_name: hpi_nginx
-    ports:
-      - "80:80"        # akses API lewat http://localhost
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      api:
-        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
     networks:
       - hpi-network
 

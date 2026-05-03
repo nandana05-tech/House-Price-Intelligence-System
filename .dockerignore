@@ -1,0 +1,44 @@
+# ── Python cache ─────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Dev/debug files (tidak perlu di production image) ────────────────────────
+debug_*.py
+dev/
+scripts/verify_pipeline.py
+
+# ── Training artifacts (besar, tidak perlu di image) ─────────────────────────
+catboost_info/
+
+# ── Frontend build cache ───────────────────────────────────────────────────────
+frontend/.next/
+frontend/node_modules/
+frontend/.env.local
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Notebook files (tidak perlu di production) ────────────────────────────────
+*.ipynb
+.ipynb_checkpoints/
