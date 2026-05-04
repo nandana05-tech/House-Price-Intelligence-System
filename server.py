@@ -83,10 +83,10 @@ async def predict_price(
     ctx: Context,
 ) -> dict:
     """
-    Estimasi harga rumah di Depok menggunakan dual-model CatBoost.
-    Model dipilih otomatis: model_low (≤1.2M IDR) atau model_high (>1.2M IDR).
+    Estimate house prices in Depok using a dual-model CatBoost approach.
+    The model is selected automatically: model_low (≤1.2B IDR) or model_high (>1.2B IDR).
     """
-    await ctx.info(f"Menghitung estimasi harga untuk properti di {lokasi}...")
+    await ctx.info(f"Estimating price for property in {lokasi}...")
     await ctx.report_progress(20, 100)
 
     from services.predictor import predict_price as _predict
@@ -136,13 +136,13 @@ async def classify_segment(
     ctx: Context = None,
 ) -> dict:
     """
-    Klasifikasi segmen harga properti ke 4 kelas:
-      0 = Murah (≤745 juta)  |  1 = Menengah (745 juta–1.3 miliar)
-      2 = Atas (1.3–2.645 miliar)  |  3 = Mewah (>2.645 miliar)
-    Jika harga tidak diisi, akan dihitung otomatis via model regresi.
+    Classify property price segments into 4 classes:
+    0 = Low (≤745 million) | 1 = Middle (745 million–1.3 billion)
+    2 = Upper (1.3–2.645 billion) | 3 = Luxury (>2.645 billion)
+    If the price is not provided, it will be automatically estimated using the regression model.
     """
     if ctx:
-        await ctx.info("Mengklasifikasikan segmen properti...")
+        await ctx.info("Classifying property segments...")
         await ctx.report_progress(20, 100)
 
     from services.predictor import classify_segment as _classify
@@ -190,12 +190,12 @@ async def cluster_property(
     ctx: Context = None,
 ) -> dict:
     """
-    Tentukan klaster pasar properti menggunakan KMeans + UMAP (6 klaster):
+    Determine property market clusters using KMeans + UMAP (6 clusters):
     Budget → Affordable → Mid-Market → Premium → Luxury → Ultra-Luxury.
-    Berguna untuk rekomendasi properti serupa dan analisis segmen pasar.
+    Useful for similar property recommendations and market segment analysis.
     """
     if ctx:
-        await ctx.info("Menentukan klaster pasar properti...")
+        await ctx.info("Determining property market clusters...")
         await ctx.report_progress(20, 100)
 
     from services.predictor import cluster_property as _cluster

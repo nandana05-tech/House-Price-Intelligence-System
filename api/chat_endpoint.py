@@ -105,7 +105,7 @@ async def chat_with_agent(body: ChatRequest) -> ChatResponse:
         "zh": "请使用以下上下文来丰富你的回答。如相关，请提及可比房源和区域知识。\n\n",
     }
 
-    # Bangun messages dengan history percakapan
+    # Build messages using the conversation history
     messages = [
         {
             "role": "system",
@@ -121,11 +121,11 @@ async def chat_with_agent(body: ChatRequest) -> ChatResponse:
         }
     ]
 
-    # Tambahkan history percakapan
+    # Build conversation history
     for msg in body.history:
         messages.append({"role": msg.role, "content": msg.content})
 
-    # Tambahkan pesan terbaru
+    # Add the latest message
     messages.append({"role": "user", "content": body.message})
 
     try:

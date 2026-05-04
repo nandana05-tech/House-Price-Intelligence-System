@@ -1,6 +1,6 @@
 # House Price Intelligence System (HPI)
 
-An LLM-powered house price prediction system for **Depok, West Java** — built as a portfolio project with a production-grade 7-layer architecture using OpenAI GPT as an intelligent LLM router, three ML models (CatBoost + KMeans + UMAP) via MCP Protocol, Kafka as the event bus, MLflow for experiment tracking, and Prisma ORM for data persistence.
+An LLM-powered house price intelligence platform for **Depok, West Java** — built as a portfolio-grade project with FastAPI backend, OpenAI GPT via MCP, CatBoost and KMeans/UMAP ML models, Kafka event streaming, MLflow tracking, and Prisma ORM for persistence.
 
 > **Dataset**: [Data Harga Rumah di Depok](https://www.kaggle.com/datasets/dimasmaulanaputra/data-harga-rumah-di-depok) — 40,200 property records from Depok, West Java.
 
@@ -9,23 +9,26 @@ An LLM-powered house price prediction system for **Depok, West Java** — built 
 ## Architecture
 
 ```
-Client (Chat/API)
+Client (Frontend / API)
     ↓
-Nginx (Load Balancer :80)
+Nginx (Reverse Proxy)
     ↓
-FastAPI (api :8080)
+FastAPI Backend (api/main.py)
     ↓
-OpenAI GPT (LLM Router)
-    ↓ MCP Protocol
-MCP Server (server.py) ──→ Kafka (fire-and-forget audit)
-    ↓                           ↓
-Direct Prediction        ML Service Pods (consumer_*.py)
-                                ↓
-                          MLflow Tracking
-                                ↓
-                      PostgreSQL + Redis (Prisma ORM)
-                                ↓
-                        Feedback → Retrain Loop
+OpenAI GPT / Chat Agent
+    ↓
+MCP Server (server.py)
+    ├─> predict_price
+    ├─> classify_segment
+    └─> cluster_property
+        ↓
+      Kafka audit events
+        ↓
+  ML service pods (kafka/consumer_*.py)
+        ↓
+   MLflow tracking + PostgreSQL + Redis
+        ↓
+    Feedback / retraining loop
 ```
 
 ---
@@ -35,6 +38,7 @@ Direct Prediction        ML Service Pods (consumer_*.py)
 | Layer | Technology |
 |-------|-----------|
 | LLM Router | OpenAI GPT (via MCP Protocol) |
+| Frontend | Next.js 14 |
 | API | FastAPI + Uvicorn |
 | Load Balancer | Nginx |
 | ML Models | CatBoost, KMeans, UMAP (scikit-learn) |
@@ -81,58 +85,31 @@ Direct Prediction        ML Service Pods (consumer_*.py)
 ## Project Structure
 
 ```
-hpi/
-├── server.py                        ← MCP Server (3 tools)
-├── docker-compose.yml               ← Full infrastructure definition
-├── Dockerfile                       ← Multi-stage build (python:3.14-rc-slim)
-├── nginx.conf                       ← Load balancer config
-├── .env.example                     ← Copy to .env and fill in API key
-├── prisma/schema.prisma             ← Database schema
-│
-├── api/
-│   ├── main.py                      ← FastAPI app + lifespan
-│   ├── predict_endpoint.py          ← POST /api/v1/predict_price, classify, cluster
-│   ├── feedback_endpoint.py         ← POST /api/v1/feedback
-│   └── chat_endpoint.py             ← POST /api/v1/chat (LLM agent)
-│
-├── services/
-│   ├── model_loader.py              ← Singleton loader for all ML artifacts
-│   ├── feature_engineer.py          ← Feature engineering (mirrors training pipeline)
-│   └── predictor.py                 ← Core prediction logic
-│
-├── kafka/
-│   ├── topics.py                    ← Topic name constants
-│   ├── consumer_regression.py       ← Regression ML pod
-│   ├── consumer_classification.py   ← Classification ML pod
-│   ├── consumer_clustering.py       ← Clustering ML pod
-│   └── consumer_feedback.py         ← Persists feedback to DB
-│
-├── mlflow_utils/
-│   ├── tracker.py                   ← Logs predictions to MLflow
-│   └── model_registry.py            ← Register & promote model versions
-│
-├── pipelines/
-│   ├── retrain_trigger.py           ← Checks threshold & triggers retraining
-│   └── retrain_pipeline.py          ← Retrains and registers new model
-│
-├── models/                          ← ML artifacts (pkl, cbm)
-│   ├── model_low.cbm
-│   ├── model_high.cbm
-│   ├── model_clf.cbm
-│   ├── kmeans_model.pkl
-│   ├── umap_reducer.pkl
-│   ├── scaler.pkl
-│   └── target_encoder.pkl
-│
-├── metadata/                        ← Model metadata (JSON)
-│   ├── metadata_regresi.json
-│   ├── metadata_klasifikasi.json
-│   └── metadata_clustering.json
-│
-└── scripts/
-    ├── predict_csv.py               ← Batch prediction from CSV
-    ├── setup_encoder.py             ← Target encoder setup
-    └── client.py                    ← Test client
+notifications/
+├── api/                        ← FastAPI endpoints and API logic
+├── catboost_info/              ← CatBoost training diagnostics and logs
+├── context/                    ← Runtime context and helper resources
+├── data/                       ← Raw and processed dataset files
+├── dev/                        ← Debugging and exploration scripts
+├── docker-compose.yml          ← Full service orchestration
+├── Dockerfile                  ← Backend container build
+├── frontend/                   ← Next.js frontend application
+├── kafka/                      ← Kafka topic constants and consumer pods
+├── knowledge/                  ← Area profiles, FAQs, market rules for RAG
+├── mlflow_utils/               ← MLflow logging and model registry utilities
+├── metadata/                   ← Model metadata and config files
+├── models/                     ← Serialized ML artifacts and binaries
+├── pipelines/                  ← Retraining trigger and retraining pipeline
+├── prisma/                     ← Prisma ORM schema definitions
+├── rag/                        ← RAG retrieval and embedding support
+├── scripts/                    ← Utility scripts for batch and ingest workflows
+├── services/                   ← Feature engineering and prediction logic
+├── server.py                   ← MCP server with callable LLM tools
+├── nginx.conf                  ← Reverse proxy configuration
+├── .env.example                ← Environment variable template
+├── pyproject.toml              ← Python package and dependency config
+├── README.md                   ← Project documentation
+└── TODO.md                     ← Development notes and next tasks
 ```
 
 ---
@@ -143,34 +120,41 @@ hpi/
 
 ```bash
 cp .env.example .env
-# Edit .env: fill in OPENAI_API_KEY
+# Edit .env and add OPENAI_API_KEY
 ```
 
 ### 2. Build & Run
 
 ```bash
-docker-compose build        # Build image (first time only)
-docker-compose up -d        # Start all services
+docker compose build
+docker compose up -d
 ```
 
-Wait ~1–2 minutes for all containers to become healthy:
+Wait until all containers are healthy.
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
-### 3. Access Services
+### 3. Check Logs
+
+```bash
+docker compose logs -f api
+```
+
+### 4. Access Services
 
 | Service | URL |
 |---------|-----|
-| API + Swagger UI | http://localhost/docs |
-| API (direct) | http://localhost:8080/docs |
-| MLflow UI | http://localhost:5000 |
-| PostgreSQL | localhost:5435 (user: `hpi`, pass: `hpi_secret`) |
-| Kafka (external) | localhost:9092 |
+| API | http://localhost:8080 |
+| Swagger / OpenAPI | http://localhost:8080/docs |
+| Health | http://localhost:8080/health |
+| MLflow | http://localhost:5000 |
+| PostgreSQL | localhost:5432 |
+| Kafka | localhost:9092 |
 | Redis | localhost:6379 |
 
-> **RAM required**: ~2GB for 6 Python containers with ML models loaded in memory.
+> For local development, use the ports defined in `.env.example` and `docker-compose.yml`.
 
 ---
 
@@ -180,11 +164,13 @@ Base URL: `http://localhost/api/v1` (via Nginx) or `http://localhost:8080/api/v1
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/predict_price` | POST | House price estimation (dual-model CatBoost) |
-| `/api/v1/classify_segment` | POST | Price segment classification (4 classes) |
-| `/api/v1/cluster_property` | POST | Property clustering (6 clusters, KMeans+UMAP) |
-| `/api/v1/feedback` | POST | Submit price correction feedback |
-| `/api/v1/chat` | POST | Chat with LLM agent (auto-calls MCP tools) |
+| `/api/v1/predict_price` | POST | Estimate house price using dual-model CatBoost |
+| `/api/v1/classify_segment` | POST | Classify a property into one of 4 price tiers |
+| `/api/v1/cluster_property` | POST | Assign market cluster with KMeans + UMAP |
+| `/api/v1/comparable_properties` | POST | Find similar properties via vector search |
+| `/api/v1/feedback` | POST | Submit corrected price feedback |
+| `/api/v1/chat` | POST | Chat with the LLM agent and perform RAG-enhanced replies |
+| `/api/v1/analytics/areas` | GET | Retrieve aggregated area analytics |
 | `/health` | GET | Health check |
 
 ### Example Requests (Postman / curl)
@@ -395,7 +381,65 @@ Content-Type: application/json
 
 ---
 
-#### 6. `POST /api/v1/chat` — Chat with LLM Agent
+#### 6. `POST /api/v1/comparable_properties` — Find Similar Properties
+
+```
+POST http://localhost/api/v1/comparable_properties
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "kamar_tidur": 3,
+  "kamar_mandi": 2,
+  "garasi": 1,
+  "luas_tanah": 120.0,
+  "luas_bangunan": 90.0,
+  "lokasi": "Cinere",
+  "harga": 1850000000,
+  "top_k": 5
+}
+```
+
+**Field Validation:**
+- `top_k`: integer, 1–20 (default: 5)
+- All other fields same as predict_price
+
+**Response:**
+```json
+{
+  "comparables": [
+    {
+      "id": "prop_001",
+      "kamar_tidur": 3,
+      "kamar_mandi": 2,
+      "garasi": 1,
+      "luas_tanah": 118.0,
+      "luas_bangunan": 89.0,
+      "lokasi": "Cinere",
+      "harga": 1840000000,
+      "similarity_score": 0.98
+    },
+    {
+      "id": "prop_002",
+      "kamar_tidur": 3,
+      "kamar_mandi": 2,
+      "garasi": 1,
+      "luas_tanah": 125.0,
+      "luas_bangunan": 92.0,
+      "lokasi": "Cinere",
+      "harga": 1870000000,
+      "similarity_score": 0.96
+    }
+  ],
+  "count": 2
+}
+```
+
+---
+
+#### 7. `POST /api/v1/chat` — Chat with LLM Agent
 
 ```
 POST http://localhost/api/v1/chat
@@ -406,6 +450,15 @@ Content-Type: application/json
 ```json
 {
   "message": "What is the estimated price of a house with 3 bedrooms, 2 bathrooms, 1 garage, 120m2 land, 90m2 building in Cinere?"
+}
+```
+
+**Optional fields:**
+```json
+{
+  "message": "What is the estimated price of a house with 3 bedrooms, 2 bathrooms, 1 garage, 120m2 land, 90m2 building in Cinere?",
+  "history": [],
+  "language": "id"
 }
 ```
 
@@ -427,28 +480,66 @@ Content-Type: application/json
 
 ---
 
+#### 8. `GET /api/v1/analytics/areas` — Get Area Analytics
+
+```
+GET http://localhost/api/v1/analytics/areas
+```
+
+**Response (returns top 10 areas):**
+```json
+[
+  {
+    "nama": "Cinere",
+    "avg_per_m2": 15430000.5,
+    "total_data": 4850,
+    "trend": "±5.2%",
+    "segmen_dom": "Atas",
+    "catatan": "The data is analyzed dynamically based on the classification model"
+  },
+  {
+    "nama": "Beji",
+    "avg_per_m2": 14120000.3,
+    "total_data": 4230,
+    "trend": "±6.1%",
+    "segmen_dom": "Menengah",
+    "catatan": "The data is analyzed dynamically based on the classification model"
+  },
+  {
+    "nama": "Sawangan",
+    "avg_per_m2": 13890000.8,
+    "total_data": 3950,
+    "trend": "±4.8%",
+    "segmen_dom": "Menengah",
+    "catatan": "The data is analyzed dynamically based on the classification model"
+  }
+]
+```
+
+---
+
 ## MCP Tools
 
-The MCP Server (`server.py`) exposes 3 tools that are automatically invoked by the LLM router:
+The MCP Server (`server.py`) exposes three callable tools:
 
-| Tool | Input | Output |
-|------|-------|--------|
-| `predict_price` | kamar_tidur, kamar_mandi, garasi, luas_tanah, luas_bangunan, lokasi | harga_estimasi, model_digunakan, mape |
-| `classify_segment` | + harga (optional) | kelas_id, kelas_label, probabilitas |
-| `cluster_property` | + harga (optional) | cluster_id, cluster_label, cluster_summary |
+| Tool | Purpose |
+|------|---------|
+| `predict_price` | Estimate property price with CatBoost |
+| `classify_segment` | Predict price segment class (4 classes) |
+| `cluster_property` | Determine market cluster with KMeans + UMAP |
 
-> If `harga` is omitted for `classify_segment` or `cluster_property`, it is automatically estimated via `predict_price`.
+Each tool publishes audit events to Kafka for asynchronous logging and retraining.
 
 ---
 
 ## Kafka Topics
 
-| Topic | Producer | Consumer |
-|-------|----------|----------|
-| `property.prediction.regression` | MCP Server | consumer_regression |
-| `property.prediction.classification` | MCP Server | consumer_classification |
-| `property.prediction.clustering` | MCP Server | consumer_clustering |
-| `property.feedback` | Feedback API | consumer_feedback |
+| Topic | Description |
+|-------|-------------|
+| `property.prediction.regression` | Regression prediction audit events |
+| `property.prediction.classification` | Classification prediction audit events |
+| `property.prediction.clustering` | Clustering prediction audit events |
+| `property.feedback` | User feedback events for retraining |
 
 ---
 
@@ -465,26 +556,52 @@ User submits price correction → POST /api/v1/feedback
 
 ---
 
-## Batch Prediction (CSV)
+## Batch Prediction
+
+Run batch CSV prediction with:
 
 ```bash
-python scripts/predict_csv.py your_data.csv
+python scripts/predict_csv.py data/input.csv
 ```
 
-**Required CSV columns**: `kamar_tidur`, `kamar_mandi`, `garasi`, `luas_tanah`, `luas_bangunan`, `lokasi`
+Required CSV columns:
+- `kamar_tidur`
+- `kamar_mandi`
+- `garasi`
+- `luas_tanah`
+- `luas_bangunan`
+- `lokasi`
 
-**Output**: `your_data_predictions.json` — predicted_price, segment, and cluster per row + MLflow log.
+The script outputs JSON predictions and logs the batch to MLflow.
 
 ---
 
 ## Environment Variables
 
+The repository uses `.env.example` for environment configuration.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | — | **Required** |
-| `DATABASE_URL` | `postgresql://hpi:hpi_secret@postgresql:5432/house_price_intel` | Prisma DB URL |
-| `REDIS_URL` | `redis://redis:6379/0` | Cache URL |
-| `KAFKA_BOOTSTRAP_SERVERS` | `kafka:29092` | Kafka internal bootstrap |
-| `MLFLOW_TRACKING_URI` | `http://mlflow:5000` | MLflow server URI |
-| `RETRAIN_FEEDBACK_THRESHOLD` | `100` | Number of feedback entries before retraining |
-| `COMPOSE_PROJECT_NAME` | `hpi` | Docker container name prefix |
+| `COMPOSE_PROJECT_NAME` | `hpi` | Docker Compose project name |
+| `MCP_TRANSPORT` | `streamable-http` | MCP transport mode |
+| `MCP_PORT` | `8000` | MCP server port |
+| `OPENAI_API_KEY` | `...` | OpenAI API key |
+| `OPENAI_MODEL` | `gpt-4o` | OpenAI model name |
+| `KAFKA_ENABLED` | `true` | Enable Kafka auditing |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap servers |
+| `KAFKA_GROUP_ID_REGRESSION` | `hpi-regression-pod` | Regression consumer group |
+| `KAFKA_GROUP_ID_CLASSIFICATION` | `hpi-classification-pod` | Classification consumer group |
+| `KAFKA_GROUP_ID_CLUSTERING` | `hpi-clustering-pod` | Clustering consumer group |
+| `KAFKA_GROUP_ID_FEEDBACK` | `hpi-feedback-pod` | Feedback consumer group |
+| `DATABASE_URL` | `postgresql://hpi:hpi_secret@127.0.0.1:5435/house_price_intel?schema=prisma` | Prisma/PostgreSQL database URL |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis cache URL |
+| `PREDICTION_CACHE_TTL` | `3600` | Prediction cache TTL in seconds |
+| `MLFLOW_TRACKING_URI` | `http://localhost:5000` | MLflow tracking URI |
+| `MLFLOW_EXPERIMENT_REGRESSION` | `house-price-regression` | Regression MLflow experiment |
+| `MLFLOW_EXPERIMENT_CLASSIFICATION` | `house-price-classification` | Classification MLflow experiment |
+| `MLFLOW_EXPERIMENT_CLUSTERING` | `house-price-clustering` | Clustering MLflow experiment |
+| `RETRAIN_FEEDBACK_THRESHOLD` | `100` | Feedback count threshold for retraining |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name for RAG |
+| `RAG_ENABLED` | `true` | Enable RAG pipeline |
+| `RAG_TOP_K_PROPERTIES` | `3` | Number of comparable properties returned by RAG |
+| `RAG_TOP_K_KNOWLEDGE` | `2` | Number of knowledge snippets returned by RAG |

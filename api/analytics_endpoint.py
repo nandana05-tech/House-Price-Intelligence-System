@@ -67,7 +67,7 @@ async def get_area_analytics(request: Request):
                     total_data=int(row.get("total_data", 0)),
                     trend=trend_str,
                     segmen_dom=segmen_dom,
-                    catatan="Data dianalisis secara dinamis berdasarkan model klasifikasi."
+                    catatan="The data is analyzed dynamically based on the classification model"
                 )
             )
             

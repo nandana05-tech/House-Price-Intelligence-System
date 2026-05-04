@@ -25,8 +25,8 @@ async def lifespan(app: FastAPI):
         models.load()
         print("[API] ML models loaded successfully")
     except Exception as e:
-        # Jangan crash — /health harus tetap respond agar healthcheck Docker tidak gagal.
-        # Model akan dicoba dimuat ulang saat request pertama masuk melalui model_loader.
+        # Do not crash — the `/health` endpoint must continue responding so the Docker healthcheck does not fail.
+        # The model will be reloaded on the first incoming request via the model_loader.
         print(f"[API] WARNING: ML model loading failed at startup: {e}")
 
     app.state.db = Prisma()

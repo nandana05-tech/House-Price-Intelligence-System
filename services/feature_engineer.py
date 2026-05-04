@@ -2,15 +2,15 @@
 Feature engineering functions — mirrors the exact transformations used during training
 for each of the three model types (regression, classification, clustering).
 
-Regression    : 21 features — mereplikasi regresio_v1.2.ipynb
+Regression    : 21 features — replicates regresio_v1.2.ipynb
                 (6 base + 15 engineered, TargetEncoder smoothing=10)
-Classification: pd.get_dummies one-hot + rasio features — mereplikasi clasifikasi_v1.0.ipynb
-Clustering    : log-transforms + Lokasi_enc — mereplikasi clustering_v1.2.2.ipynb
+Classification: pd.get_dummies one-hot + ratio features — replicates clasifikasi_v1.0.ipynb
+Clustering    : log-transforms + Lokasi_enc — replicates clustering_v1.2.2.ipynb
 
-CATATAN PENTING — urutan transformasi klasifikasi:
-  1. Hitung semua rasio/interaksi dari nilai ASLI (sebelum log)
-  2. Baru log1p pada Luas Tanah dan Luas Bangunan
-  (persis notebook — rasio dihitung dari raw, bukan dari log)
+IMPORTANT NOTE — classification transformation order:
+  1. Compute all ratios/interactions from ORIGINAL values (before log)
+  2. Then apply log1p to Land Area and Building Area
+  (exactly as in the notebook — ratios are computed from raw values, not from log)
 """
 import numpy as np
 import pandas as pd
@@ -40,12 +40,12 @@ def engineer_regression_features(
 ) -> pd.DataFrame:
     """Return a single-row DataFrame ready for the CatBoost regression models.
 
-    Mereplikasi persis transformasi notebook regresio_v1.2.ipynb:
-      - TargetEncoder(smoothing=10) untuk kolom Lokasi → Lokasi_Target
-      - add_features(): 15 engineered features di atas 6 base features (total 21)
-    Kolom akhir diambil dari meta_regresi["fitur"] (single source of truth).
+    Replicating the exact transformations from the regresio_v1.2.ipynb notebook:
+      - TargetEncoder(smoothing=10) for the Lokasi column → Lokasi_Target
+      - add_features(): 15 engineered features on top of 6 base features (total 21)
+    The final columns are selected from meta_regresi["fitur"] (single source of truth).
     """
-    # Target-encode lokasi dengan encoder yang sudah difit saat training
+    # Target-encode the location using the encoder that was already fitted during training
     lokasi_target = float(
         models.target_encoder.transform(
             pd.DataFrame({"Lokasi": [lokasi]})
@@ -64,7 +64,7 @@ def engineer_regression_features(
         "Luas Tanah":         luas_tanah,
         "Luas Bangunan":      luas_bangunan,
         "Lokasi_Target":      lokasi_target,
-        # ── Engineered features (15) — persis add_features() notebook ──
+        # ── Engineered features (15) — exactly as in the add_features() notebook ──
         "total_kamar":        total_kamar,
         "kamar_ratio":        kamar_tidur / (kamar_mandi + 1),
         "garasi_kamar":       garasi * total_kamar,
@@ -84,7 +84,7 @@ def engineer_regression_features(
 
     df = pd.DataFrame([row])
 
-    # Pilih kolom sesuai urutan metadata (authoritative list)
+    # Select columns according to the metadata order (authoritative list)
     feature_cols = models.meta_regresi["fitur"]
     return df[feature_cols]
 
@@ -102,18 +102,18 @@ def engineer_classification_features(
 ) -> pd.DataFrame:
     """Return a single-row DataFrame ready for the CatBoost classifier.
 
-    Mereplikasi transformasi clasifikasi_v1.0.ipynb (URUTAN PENTING):
-      Langkah 1 — hitung semua rasio & interaksi dari nilai ASLI:
+    Replicating the exact transformations from the clasifikasi_v1.0.ipynb notebook (IMPORTANT ORDER):
+      Step 1 — compute all ratios & interactions from ORIGINAL values:
         rasio_bangunan_tanah  = LB_raw / (LT_raw + 1)
         harga_per_m2_tanah    = Harga  / (LT_raw + 1)
         harga_per_m2_bangunan = Harga  / (LB_raw + 1)
         luas_total            = LT_raw + LB_raw
         kamar_per_luas        = total_kamar / (LB_raw + 1)
 
-      Langkah 2 — log1p pada Luas Tanah dan Luas Bangunan
-      Langkah 3 — one-hot encode Lokasi
+      Step 2 — apply log1p to Land Area and Building Area
+      Step 3 — one-hot encode Lokasi
     """
-    # Nilai ASLI (raw) untuk perhitungan rasio
+    # ORIGINAL (raw) values for ratio calculations
     lt_raw = max(luas_tanah, 0)
     lb_raw = max(luas_bangunan, 0)
     total_kamar = kamar_tidur + kamar_mandi
@@ -122,10 +122,10 @@ def engineer_classification_features(
         "Kamar Tidur":           kamar_tidur,
         "Kamar Mandi":           kamar_mandi,
         "Garasi":                garasi,
-        # Langkah 2: log1p pada luas (persis notebook)
+        # Step 2: log1p on area (exactly as in the notebook)
         "Luas Tanah":            np.log1p(lt_raw),
         "Luas Bangunan":         np.log1p(lb_raw),
-        # Langkah 1: rasio dihitung dari nilai ASLI (bukan dari log)
+        # Step 1: ratios calculated from ORIGINAL values (not log-transformed)
         "rasio_bangunan_tanah":  lb_raw / (lt_raw + 1),
         "total_kamar":           total_kamar,
         "harga_per_m2_tanah":    harga / (lt_raw + 1),
@@ -135,7 +135,7 @@ def engineer_classification_features(
         "garasi_flag":           1 if garasi > 0 else 0,
     }
 
-    # Langkah 3: one-hot encode lokasi
+    # Step 3: one-hot encode lokasi
     for loc in _known_locations():
         row[f"Lokasi_{loc}"] = 1 if lokasi == loc else 0
 
@@ -154,21 +154,21 @@ def engineer_clustering_features(
 ) -> pd.DataFrame:
     """Return a single-row DataFrame ready for the UMAP + KMeans pipeline.
 
-    Mereplikasi transformasi clustering_v1.2.2.ipynb:
-      - log transforms untuk Harga, LT, LB, Harga/m²
+    Replicating the exact transformations from the clustering_v1.2.2.ipynb notebook:
+      - log transforms for Harga, LT, LB, Harga/m²
       - rasio_LB_LT
       - Lokasi_enc via median log_Harga per kecamatan (lokasi_median_encoder.pkl)
-        BUKAN via TargetEncoder sklearn seperti regresi.
+        NOT via TargetEncoder sklearn like in regression.
     """
     lt = luas_tanah if luas_tanah > 0 else 1
 
-    # Gunakan lokasi_median_encoder (dict) jika tersedia — persis notebook clustering
+    # Use the lokasi_median_encoder (dict) if available — exactly as in the clustering notebook
     if models.lokasi_median_encoder is not None:
         # dict: {lokasi_name: median_log_Harga}
         global_median = float(np.median(list(models.lokasi_median_encoder.values())))
         lokasi_enc = float(models.lokasi_median_encoder.get(lokasi, global_median))
     else:
-        # Fallback: TargetEncoder regresi (kurang akurat tapi tidak crash)
+        # Fallback: regression TargetEncoder (less accurate but prevents crashes)
         lokasi_enc = float(
             models.target_encoder.transform(
                 pd.DataFrame({"Lokasi": [lokasi]})

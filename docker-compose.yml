@@ -103,9 +103,9 @@ services:
       - hpi-network
 
   # ── One-shot DB bootstrap ────────────────────────────────────────────────
-  # Jalankan sekali saat pertama deploy (atau saat data perlu di-refresh).
-  # Exit 0 setelah selesai — tidak restart.
-  # Service lain (api, mcp_server, consumer_*) menunggu init selesai.
+  # Run once during the initial deployment (or whenever the data needs to be refreshed).
+  # Exit with code 0 after completion — do not restart.
+  # Other services (api, mcp_server, consumer_*, etc.) wait until initialization is complete.
   init:
     build: .
     container_name: hpi_init

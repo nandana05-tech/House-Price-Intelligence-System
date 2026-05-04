@@ -1,19 +1,19 @@
 """
-Standalone retraining script untuk model CLUSTERING (KMeans + UMAP).
+Standalone retraining script for the CLUSTERING model (KMeans + UMAP).
 
-Mereplikasi persis notebook clustering_v1.2.2.ipynb:
-  - Filter harga: 50jt - 10M
-  - IQR drop (bukan clip) pada Harga, Luas Tanah, Luas Bangunan
-  - Lokasi encoding: median log_Harga per kecamatan (dictionary, BUKAN sklearn TargetEncoder)
-  - Features: log_Harga, log_LT, log_LB, log_Harga_m2, rasio_LB_LT, Kamar Tidur, Kamar Mandi, Lokasi_enc
-  - StandardScaler -> UMAP(10D) -> KMeans(K=6)
-  - Cluster di-urutkan berdasarkan median Harga
+This script fully replicates the process in clustering_v1.2.2.ipynb:
+  - Price filtering: 50 million – 10 billion
+  - IQR-based removal (drop, not clip) for Price, Land Area, and Building Area
+  - Location encoding: median log price per district (dictionary-based, NOT sklearn TargetEncoder)
+  - Features used: log_Price, log_LandArea, log_BuildingArea, log_Price_per_m2, Building_to_Land_ratio, Bedrooms, Bathrooms, Encoded_Location
+  - Pipeline: StandardScaler -> UMAP (10D) -> KMeans (K=6)
+  - Clusters are ordered based on median Price
 
-PENTING: clustering menggunakan encoder yang BERBEDA dengan regresi.
-  - Regresi: sklearn TargetEncoder (smoothing=10) -> target_encoder.pkl
-  - Clustering: median log_Harga per kecamatan -> lokasi_median_encoder.pkl (FILE BARU)
+IMPORTANT: clustering uses a DIFFERENT encoder from regression.
+  - Regression: sklearn TargetEncoder (smoothing=10) -> target_encoder.pkl
+  - Clustering: median log price per district -> lokasi_median_encoder.pkl (NEW FILE)
 
-Jalankan dari direktori notifications/:
+Run from the notifications/ directory:
     python scripts/retrain_clustering.py
 """
 from __future__ import annotations

@@ -51,17 +51,17 @@ class ModelLoader:
         self.target_encoder = self._load_pickle(MODELS_DIR / "target_encoder.pkl")
 
         # ── Lokasi median encoder (clustering only) ───────────────────
-        # Clustering memakai median log_Harga per kecamatan (dict),
-        # bukan sklearn TargetEncoder seperti regresi.
+        # Clustering uses the median log_price per subdistrict (dict), 
+        # not an sklearn TargetEncoder like in regression.
         lokasi_enc_path = MODELS_DIR / "lokasi_median_encoder.pkl"
         if lokasi_enc_path.exists():
             self.lokasi_median_encoder = self._load_pickle(lokasi_enc_path)
         else:
-            # Fallback: gunakan target_encoder (kompatibel mundur)
+            # Fallback: use the target encoder (backward compatible)
             self.lokasi_median_encoder = None
-            print("[ModelLoader] WARNING: lokasi_median_encoder.pkl tidak ditemukan, "
-                  "clustering akan memakai target_encoder (kurang akurat). "
-                  "Jalankan scripts/retrain_clustering.py untuk memperbaiki.")
+            print("[ModelLoader] WARNING: lokasi_median_encoder.pkl not found, "
+                  "clustering will use target_encoder (less accurate). "
+                  "Run scripts/retrain_clustering.py to fix this.")
 
         # ── Metadata ──────────────────────────────────────────────────
         self.meta_regresi: dict = self._load_json(METADATA_DIR / "metadata_regresi.json")

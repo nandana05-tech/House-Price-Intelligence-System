@@ -34,13 +34,13 @@ WORKDIR /app
 
 COPY . .
 
-RUN test -d models || (echo "ERROR: folder models/ tidak ditemukan" && exit 1)
-RUN test -d metadata || (echo "ERROR: folder metadata/ tidak ditemukan" && exit 1)
+RUN test -d models || (echo "ERROR: folder models/ not found" && exit 1)
+RUN test -d metadata || (echo "ERROR: folder metadata/ not found" && exit 1)
 
 RUN prisma generate
 
 EXPOSE 8080
 
-# Default CMD: jalankan FastAPI. Setiap service di docker-compose
-# bisa override command ini sesuai kebutuhan (mcp_server, consumer_*, dll).
+# Default CMD: run FastAPI. Each service is defined in docker-compose
+# This command can be overridden as needed (mcp_server, consumer_*, etc.).
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8080"]

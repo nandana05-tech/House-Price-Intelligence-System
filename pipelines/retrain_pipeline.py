@@ -126,10 +126,10 @@ def _train_regression(df: pd.DataFrame) -> float:
 
     models.load()
 
-    # Batas segmen dari metadata — TIDAK hardcoded
+    # Segment boundaries are derived from metadata — NOT hardcoded
     batas = float(models.meta_regresi["batas_segmen"])
 
-    # Build feature matrix dari data combined (base + feedback)
+    # Build the feature matrix from combined data (base + feedback).
     rows = []
     for _, row in df.iterrows():
         feat = engineer_regression_features(
@@ -149,7 +149,7 @@ def _train_regression(df: pd.DataFrame) -> float:
         X, y, test_size=0.2, random_state=42
     )
 
-    # Split per segmen berdasarkan harga asli
+    # Split by segment based on the original price
     harga_train = df["Harga"].values[X_train.index]
     harga_test  = df["Harga"].values[X_test.index]
     mask_low_train = harga_train <= batas
@@ -180,14 +180,14 @@ def _train_regression(df: pd.DataFrame) -> float:
             mape    = float(np.mean(np.abs((actuals - preds) / actuals)) * 100)
             mapes.append(mape)
 
-            # Simpan ke MODELS_DIR (bukan BASE_DIR — ini bug lama yang sudah diperbaiki)
+            # Save to MODELS_DIR (not BASE_DIR — this is a previously fixed bug)
             save_path = str(MODELS_DIR / save_name)
             model.save_model(save_path)
             mlflow.log_metric(f"mape_{model_name}", mape)
             mlflow.log_artifact(save_path)
             print(f"[Retrain] {model_name} → MAPE: {mape:.2f}% (saved: {save_path})")
 
-    # Reload models singleton dengan model baru
+    # Reload the model singleton with the updated models
     from services.model_loader import ModelLoader
     ModelLoader._loaded = False
     models.load()
@@ -197,8 +197,8 @@ def _train_regression(df: pd.DataFrame) -> float:
 
 def _retrain_classification_and_clustering() -> None:
     """
-    Retrain klasifikasi dan clustering via script yang sudah ada.
-    Kedua script sudah mereplikasi persis logika notebook masing-masing.
+    Retrain classification and clustering using the existing scripts.
+    Both scripts fully replicate the exact logic from their respective notebooks.
     """
     scripts = [
         BASE_DIR / "scripts" / "retrain_klasifikasi.py",
@@ -211,13 +211,13 @@ def _retrain_classification_and_clustering() -> None:
             capture_output=True, text=True, cwd=str(BASE_DIR),
         )
         if result.returncode != 0:
-            # Log sebagai warning — jangan batalkan seluruh retrain jika satu script gagal
+            # Log as a warning — do not abort the entire retraining process if one script fails
             print(f"[Retrain] WARNING: {script.name} failed (code {result.returncode}):")
             print(result.stderr[:800] if result.stderr else "(no stderr)")
         else:
             print(f"[Retrain] {script.name}: OK")
             if result.stdout:
-                # Tampilkan baris terakhir saja (biasanya ringkasan metrik)
+                # Display only the last line (usually the metrics summary)
                 last_lines = result.stdout.strip().split("\n")[-5:]
                 print("\n".join(f"    {l}" for l in last_lines))
 

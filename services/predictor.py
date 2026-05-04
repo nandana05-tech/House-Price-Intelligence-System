@@ -30,43 +30,43 @@ def predict_price(
     """
     Dual-model CatBoost price regression.
 
-    Strategi:
-      1. First-pass dengan model_low untuk estimasi awal harga
-      2. Jika estimasi ≤ batas_segmen → gunakan model_low (final)
-         Jika estimasi  > batas_segmen → gunakan model_high (final)
+    Strategy:
+    1. Perform a first-pass using model_low for an initial price estimate
+    2. If the estimate ≤ segment_threshold → use model_low (final)
+        If the estimate  > segment_threshold → use model_high (final)
 
-    Batas segmen dibaca dari meta_regresi["batas_segmen"] (single source of truth),
-    sehingga selalu sinkron dengan model yang di-train.
+    The segment threshold is read from meta_regression["segment_threshold"] (single source of truth),
+    ensuring it always stays consistent with the trained models.
     """
     t0 = time.perf_counter()
 
-    # Baca batas segmen dari metadata — TIDAK hardcoded
+    # Read segment threshold from metadata — NOT hardcoded
     batas_segmen = float(models.meta_regresi["batas_segmen"])
-    # Blending zone: ±5% di sekitar batas agar tidak ada cliff-effect
+    # Blending zone: ±5% around the threshold to avoid cliff-effect
     blend_margin = batas_segmen * 0.05
 
     X = engineer_regression_features(
         kamar_tidur, kamar_mandi, garasi, luas_tanah, luas_bangunan, lokasi
     )
 
-    # First-pass dengan model_low untuk menentukan segmen
+    # First-pass using model_low to determine the segment
     log_harga_low  = float(models.model_low.predict(X)[0])
     harga_low      = float(np.expm1(log_harga_low))
     log_harga_high = float(models.model_high.predict(X)[0])
     harga_high     = float(np.expm1(log_harga_high))
 
     if harga_low < batas_segmen - blend_margin:
-        # Jelas di segmen bawah
+        # Clearly in the lower segment.
         harga_final    = harga_low
         model_digunakan = "model_low"
         mape = models.meta_regresi["model_low"]["mape"]
     elif harga_low > batas_segmen + blend_margin:
-        # Jelas di segmen atas
+        # Clearly in the upper segment.
         harga_final    = harga_high
         model_digunakan = "model_high"
         mape = models.meta_regresi["model_high"]["mape"]
     else:
-        # Blending zone: weighted average berdasarkan jarak ke batas
+        # Blending zone: weighted average based on distance to the boundary
         ratio_high = (harga_low - (batas_segmen - blend_margin)) / (2 * blend_margin)
         ratio_high = max(0.0, min(1.0, ratio_high))
         harga_final    = harga_low * (1 - ratio_high) + harga_high * ratio_high
@@ -98,9 +98,8 @@ def classify_segment(
 ) -> dict:
     """
     4-class price segment classifier (CatBoost).
-
-    Jika `harga` tidak diberikan, estimasi harga diperoleh dari model regresi
-    terlebih dahulu, kemudian digunakan sebagai fitur klasifikasi.
+    If `price` is not provided, the price is first estimated using a regression model, 
+    then used as a feature for classification.
     """
     t0 = time.perf_counter()
 
@@ -147,8 +146,8 @@ def cluster_property(
     """
     KMeans + UMAP clustering (6 clusters).
 
-    Jika `harga` tidak diberikan, estimasi harga diperoleh dari model regresi
-    terlebih dahulu, kemudian digunakan sebagai fitur clustering.
+    If `price` is not provided, the price is first estimated using a regression model,
+    then used as a feature for clustering.
     """
     t0 = time.perf_counter()
 
@@ -195,7 +194,7 @@ def cluster_property(
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _format_rupiah(nilai: float) -> str:
-    """Format angka ke string Rupiah yang mudah dibaca (e.g. 'Rp 1,25 Miliar')."""
+    """Format numbers into a readable Indonesian Rupiah string (e.g., “Rp 1.25 Billion”)"""
     if nilai >= 1_000_000_000:
         return f"Rp {nilai / 1_000_000_000:.2f} Miliar"
     elif nilai >= 1_000_000:

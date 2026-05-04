@@ -14,4 +14,4 @@ print("[classify_segment]", c["kelas_label"], "| harga_sumber:", c["harga_sumber
 cl = cluster_property(90, 70, 3, 2, "Cinere")
 print("[cluster_property]", cl["cluster_label"], "| harga_sumber:", cl["harga_sumber"])
 
-print("SEMUA OK!")
+print("OK!")

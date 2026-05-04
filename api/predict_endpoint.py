@@ -15,7 +15,7 @@ class PredictPriceRequest(BaseModel):
     lokasi: str = Field(..., min_length=2)
 
 class SegmentRequest(PredictPriceRequest):
-    harga: Optional[float] = Field(None, description="Harga properti (opsional). Jika tidak diisi, diestimasi via model.")
+    harga: Optional[float] = Field(None, description="Property price (optional). If not provided, it will be estimated using the model.")
 
 class ClusterRequest(SegmentRequest):
     pass
@@ -23,7 +23,7 @@ class ClusterRequest(SegmentRequest):
 @router.post("/predict_price")
 async def api_predict_price(body: PredictPriceRequest):
     """
-    Estimasi harga rumah menggunakan dual-model CatBoost.
+    Estimate house price using the dual-model CatBoost.
     """
     try:
         return predict_price(**body.model_dump())
@@ -33,7 +33,7 @@ async def api_predict_price(body: PredictPriceRequest):
 @router.post("/classify_segment")
 async def api_classify_segment(body: SegmentRequest):
     """
-    Klasifikasi segmen harga properti ke 4 kelas.
+    Classify property price segments into 4 classes.
     """
     try:
         return classify_segment(**body.model_dump())
@@ -43,7 +43,7 @@ async def api_classify_segment(body: SegmentRequest):
 @router.post("/cluster_property")
 async def api_cluster_property(body: ClusterRequest):
     """
-    Tentukan klaster pasar properti menggunakan KMeans + UMAP (6 klaster).
+    Determine property market clusters using KMeans + UMAP (6 clusters).
     """
     try:
         return cluster_property(**body.model_dump())

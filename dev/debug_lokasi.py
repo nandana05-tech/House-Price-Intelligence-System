@@ -1,4 +1,4 @@
-"""Script diagnosa: cek apakah lokasi berbeda menghasilkan harga berbeda."""
+"""Diagnostic script: check whether different locations result in different prices."""
 import sys
 sys.path.insert(0, '.')
 

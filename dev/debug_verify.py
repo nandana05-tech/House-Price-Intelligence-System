@@ -1,6 +1,6 @@
 """
-Verifikasi final: konfirmasi root cause dan cek apakah hanya memakai 6 fitur pertama
-model bisa sensitif terhadap Lokasi_Target.
+Final verification: confirm the root cause and check whether the model is only using the first 6 features.
+The model may be sensitive to Location_Target.
 """
 import sys
 sys.path.insert(0, '.')
@@ -13,7 +13,7 @@ models.load()
 model_features = list(models.model_low.feature_names_)
 print(f"Model hanya mengenal {len(model_features)} fitur: {model_features}")
 
-# Buat DataFrame hanya dengan 6 fitur yang dikenal model
+# Create a DataFrame using only the 6 features recognized by the model
 from services.feature_engineer import engineer_regression_features
 
 print("\n=== Test lokasi dengan HANYA 6 fitur yang model kenal ===")
@@ -26,7 +26,7 @@ for loc in ['Cinere', 'Sawangan', 'Margonda', 'Tapos', 'Citayam', 'Pangkalan Jat
             pd.DataFrame({"Lokasi": [loc]})
         )["Lokasi"].iloc[0]
     )
-    # Buat DataFrame dengan persis 6 fitur
+    # Create a DataFrame with exactly the 6 features
     X6 = pd.DataFrame([{
         "Kamar Tidur":   3,
         "Kamar Mandi":   2,

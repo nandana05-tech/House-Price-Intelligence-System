@@ -1,4 +1,4 @@
-"""Verifikasi akhir semua implementasi plan."""
+"""Final verification of all plan implementations."""
 import os
 
 files_to_check = {
@@ -51,7 +51,7 @@ for fname, checks in files_to_check.items():
         print(f"  [MISS] {fname}")
         all_ok = False
 
-# Cek debug files dipindah
+# Check that debug files have been moved
 dev_files = os.listdir("dev") if os.path.isdir("dev") else []
 debug_count = len([f for f in dev_files if "debug_" in f])
 debug_ok = debug_count > 0

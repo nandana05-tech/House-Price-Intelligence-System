@@ -1,15 +1,15 @@
 """
-Standalone retraining script untuk model KLASIFIKASI.
+Standalone retraining script for the CLASSIFICATION model.
 
-Mereplikasi persis notebook clasifikasi_v1.0.ipynb:
-  - IQR clip (bukan drop) pada semua kolom numerik
-  - Feature engineering dengan harga asli (sebelum log)
-  - log1p hanya pada Luas Tanah dan Luas Bangunan
-  - pd.get_dummies untuk Lokasi
+This script exactly replicates the workflow from clasifikasi_v1.0.ipynb:
+  - IQR-based clipping (not dropping) applied to all numerical columns
+  - Feature engineering uses the original price values (before log transformation)
+  - log1p transformation applied only to Land Area and Building Area
+  - Location encoded using pd.get_dummies
   - CatBoostClassifier (iterations=1500, depth=8, l2=3)
-  - Label: 0=Murah (<=745jt), 1=Menengah (745jt-1.3M), 2=Atas (1.3M-2.645M), 3=Mewah (>2.645M)
+  - Labels: 0=Low (<=745M), 1=Mid (745M–1.3B), 2=Upper (1.3B–2.645B), 3=Luxury (>2.645B)
 
-Jalankan dari direktori notifications/:
+Run from the notifications/ directory:
     python scripts/retrain_klasifikasi.py
 """
 from __future__ import annotations

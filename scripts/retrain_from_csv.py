@@ -1,35 +1,35 @@
 """
-Standalone retraining script — mereplikasi persis notebook regresio_v1.2.ipynb.
+Standalone retraining script — fully reproduces the workflow from regresio_v1.2.ipynb.
 
-Preprocessing (persis notebook):
-  1. Parsing harga string -> float
-  2. Parsing luas dengan regex
-  3. Drop NaN
-  4. Filter outlier KHUSUS REGRESI (bukan IQR standar clustering):
-     - LB > 10, LT > 10
-     - Hapus kavling: ~(LT > 400 & LB < 150)
-     - LB <= 600, LT <= 1000
-     - KT <= 8, KM <= 8, Garasi <= 6
-     - Harga >= 200jt
-     - Filter quantile global [1%, 99%] pada Harga
-     - Filter per lokasi (5%-95%) untuk lokasi >= 10 data
-     - Filter harga per m2 (5%-95%)
-  5. Split train/test SEBELUM encoding (hindari leakage)
-  6. TargetEncoder (smoothing=10) untuk Lokasi
-  7. Feature engineering (add_features)
-  8. Split per segmen: batas = median(Harga) dari data bersih
-  9. Sample weight 2x untuk data ekstrem
-  10. CatBoostRegressor (iterations=5000, lr=0.02, depth=7)
+Preprocessing steps (aligned with the notebook):
+  1. Convert price strings into float values
+  2. Extract land/building size using regex
+  3. Remove missing values (NaN)
+  4. Apply regression-specific outlier filtering (NOT the standard IQR used in clustering):
+     - Building Area > 10, Land Area > 10
+     - Exclude land-only properties: ~(Land Area > 400 & Building Area < 150)
+     - Building Area <= 600, Land Area <= 1000
+     - Bedrooms <= 8, Bathrooms <= 8, Garage <= 6
+     - Price >= 200 million
+     - Apply global quantile filtering [1%, 99%] on Price
+     - Apply location-based filtering (5%–95%) for locations with ≥10 records
+     - Filter price per m² within 5%–95%
+  5. Perform train/test split BEFORE encoding (to prevent leakage)
+  6. Apply TargetEncoder (smoothing=10) on Location
+  7. Perform feature engineering (add_features)
+  8. Split into segments based on median Price from cleaned data
+  9. Assign 2x sample weight for extreme data points
+ 10. Train using CatBoostRegressor (iterations=5000, lr=0.02, depth=7)
 
-Fitur yang dilatih (21 total):
-  Base (6): Kamar Tidur, Kamar Mandi, Garasi, Luas Tanah, Luas Bangunan, Lokasi_Target
-  Engineered (15): total_kamar, kamar_ratio, garasi_kamar, luxury_score,
-                   rasio_bang_tanah, luas_per_kamar, luas_total,
-                   log_luas_tanah, log_luas_bangunan, log_lokasi,
-                   lokasi_x_kamar, lokasi_x_garasi, lokasi_x_luxury,
-                   lokasi_x_luas_bang, lokasi_per_kamar
+Trained features (21 total):
+  Base (6): Bedrooms, Bathrooms, Garage, Land Area, Building Area, Location_Target
+  Engineered (15): total_rooms, room_ratio, garage_per_room, luxury_score,
+                   building_land_ratio, area_per_room, total_area,
+                   log_land_area, log_building_area, log_location,
+                   location_x_rooms, location_x_garage, location_x_luxury,
+                   location_x_building_area, location_per_room
 
-Jalankan dari direktori notifications/:
+Run from the notifications/ directory:
     python scripts/retrain_from_csv.py
 """
 from __future__ import annotations

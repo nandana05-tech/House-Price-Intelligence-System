@@ -37,24 +37,24 @@ async def _get_producer() -> AIOKafkaProducer:
 # ── Request / Response schemas ─────────────────────────────────────────────
 
 class FeedbackRequest(BaseModel):
-    prediction_id: Optional[str] = Field(None, description="ID prediksi MCP yang dikoreksi (opsional)")
+    prediction_id: Optional[str] = Field(None, description="Corrected MCP prediction ID (optional)")
     kamar_tidur: int = Field(..., ge=1, le=20)
     kamar_mandi: int = Field(..., ge=1, le=20)
     garasi: int = Field(..., ge=0, le=10)
     luas_tanah: float = Field(..., gt=0)
     luas_bangunan: float = Field(..., gt=0)
     lokasi: str = Field(..., min_length=2)
-    harga_prediksi: float = Field(..., gt=0, description="Harga yang diprediksi model (IDR)")
-    harga_asli: float = Field(..., gt=0, description="Harga aktual / koreksi user (IDR)")
-    sumber: str = Field("user_feedback", description="Sumber feedback")
+    harga_prediksi: float = Field(..., gt=0, description="Predicted property price (IDR)")
+    harga_asli: float = Field(..., gt=0, description="Actual price / user correction (IDR)")
+    sumber: str = Field("user_feedback", description="Feedback source")
 
     @field_validator("harga_asli", "harga_prediksi")
     @classmethod
     def harga_reasonable(cls, v: float) -> float:
         if v < 10_000_000:
-            raise ValueError("Harga terlalu kecil (minimum Rp 10 juta)")
+            raise ValueError("The price is too low (minimum Rp 10 million)")
         if v > 500_000_000_000:
-            raise ValueError("Harga terlalu besar")
+            raise ValueError("The price is too high")
         return v
 
 
@@ -84,10 +84,10 @@ async def submit_feedback(body: FeedbackRequest, request: Request) -> FeedbackRe
         producer = await _get_producer()
         await producer.send_and_wait(FEEDBACK_EVENTS, payload)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Kafka tidak tersedia: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"Kafka is not available: {exc}") from exc
 
     return FeedbackResponse(
         success=True,
-        message=f"Feedback diterima. Selisih prediksi: {selisih:.1f}%",
+        message=f"Feedback received. Prediction difference: {selisih:.1f}%",
         selisih_persen=round(selisih, 2),
     )

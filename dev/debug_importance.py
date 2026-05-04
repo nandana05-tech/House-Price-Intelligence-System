@@ -1,4 +1,4 @@
-"""Cek feature importance model_low untuk memastikan root cause."""
+"""Check the feature importance of model_low to identify the root cause"""
 import sys
 sys.path.insert(0, '.')
 

@@ -62,7 +62,7 @@ export default function ChatPanel({
       content: t('id', 'chat.welcome'),
     },
   ])
-  // History untuk dikirim ke backend (hanya role user/assistant)
+  // History to be sent to the backend (user/assistant roles only)
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [input,   setInput]   = useState('')
   const [loading, setLoading] = useState(false)
@@ -88,15 +88,15 @@ export default function ChatPanel({
     if (!msg || loading) return
     setInput('')
 
-    // Tambah ke UI
+    // Add to UI
     setMessages(prev => [...prev, { role: 'user', content: msg }])
 
-    // Tambah ke history untuk backend
+    // Add to history for backend
     const newHistory: ChatMessage[] = [...history, { role: 'user', content: msg }]
 
     setLoading(true)
     try {
-      // Kirim pesan + history (tanpa pesan terakhir karena sudah ada di message)
+      // Send message + history (without the last message since it's already in the UI)
       const res = await api.chat(msg, history, language)
 
       setMessages(prev => [...prev, {
@@ -105,7 +105,7 @@ export default function ChatPanel({
         tools_used: res.tools_used,
       }])
 
-      // Update history dengan pesan user + reply assistant
+      // Update history with user message + assistant reply
       setHistory([...newHistory, { role: 'assistant', content: res.reply }])
 
     } catch (e: unknown) {
