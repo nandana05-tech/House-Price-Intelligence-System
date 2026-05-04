@@ -3,12 +3,14 @@
 import './globals.css'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import clsx from 'clsx'
+import { type Lang, getStoredLang, setStoredLang, t } from '@/lib/i18n'
 
 const navItems = [
   {
     href: '/',
-    label: 'Prediksi',
+    labelKey: 'nav.prediksi',
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <path d="M2 14L5.5 9.5L8.5 12L11.5 7L14 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -19,7 +21,7 @@ const navItems = [
   },
   {
     href: '/riwayat',
-    label: 'Riwayat',
+    labelKey: 'nav.riwayat',
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.5"/>
@@ -29,7 +31,7 @@ const navItems = [
   },
   {
     href: '/analitik',
-    label: 'Analitik',
+    labelKey: 'nav.analitik',
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <rect x="2" y="9" width="3" height="5" rx="1" fill="currentColor" opacity="0.6"/>
@@ -42,6 +44,11 @@ const navItems = [
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const [lang, setLang] = useState<Lang>('id')
+
+  useEffect(() => {
+    setLang(getStoredLang())
+  }, [])
 
   return (
     <html lang="id">
@@ -58,14 +65,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
               <div>
                 <div className="text-[13px] font-semibold text-stone-900 leading-none">PropValAI</div>
-                <div className="text-[10px] text-stone-400 mt-0.5">Estimasi Properti</div>
+                <div className="text-[10px] text-stone-400 mt-0.5">{t(lang, 'app.estimasiProperti')}</div>
               </div>
             </div>
           </div>
 
           {/* Nav */}
           <nav className="flex-1 py-3 px-2">
-            <div className="text-[10px] font-medium text-stone-400 px-3 mb-2 uppercase tracking-widest">Menu</div>
+            <div className="text-[10px] font-medium text-stone-400 px-3 mb-2 uppercase tracking-widest">{t(lang, 'nav.menu')}</div>
             {navItems.map((item) => {
               const active = pathname === item.href
               return (
@@ -80,7 +87,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   )}
                 >
                   <span className={clsx(active ? 'text-amber-600' : 'text-stone-400')}>{item.icon}</span>
-                  {item.label}
+                  {t(lang, item.labelKey)}
                 </Link>
               )
             })}
@@ -88,9 +95,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
           {/* Footer status */}
           <div className="px-5 py-4 border-t border-stone-100">
+            <div className="mb-2">
+              <label className="text-[10px] text-stone-400">{t(lang, 'app.langLabel')}</label>
+              <select
+                value={lang}
+                onChange={(e) => {
+                  const next = e.target.value as Lang
+                  setLang(next)
+                  setStoredLang(next)
+                }}
+                className="mt-1 w-full text-[11px] bg-stone-50 border border-stone-200 rounded-md px-2 py-1 text-stone-700"
+              >
+                <option value="id">Indonesia</option>
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+            </div>
             <div className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse-slow"/>
-              <span className="text-[11px] text-stone-400">Model aktif</span>
+              <span className="text-[11px] text-stone-400">{t(lang, 'app.modelActive')}</span>
             </div>
           </div>
         </aside>

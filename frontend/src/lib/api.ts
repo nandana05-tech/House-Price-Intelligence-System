@@ -40,7 +40,7 @@ export interface ClusterSummary {
   harga_median:     number
   luas_tanah_median: number
   luas_bangunan_median: number
-  lokasi_dominan:   string[]
+  lokasi_dominan?:  string[]
 }
 
 export interface ClusterResult {
@@ -110,6 +110,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    let msg = `HTTP ${res.status}`
+    try { msg = JSON.parse(text)?.detail ?? msg } catch { msg = text || msg }
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
 export const api = {
   predictPrice:    (data: PropertyInput) =>
     post<PredictResult>('/predict_price', data),
@@ -124,11 +138,25 @@ export const api = {
     post<{ comparables: ComparableProperty[]; count: number }>('/comparable_properties', data),
 
   // history: array pesan sebelumnya untuk context
-  chat: (message: string, history: ChatMessage[] = []) =>
-    post<ChatResult>('/chat', { message, history }),
+  chat: (message: string, history: ChatMessage[] = [], language: 'id' | 'en' | 'zh' = 'id') =>
+    post<ChatResult>('/chat', { message, history, language }),
 
+  // feedback
   feedback: (data: FeedbackInput) =>
     post<FeedbackResult>('/feedback', data),
+
+  // analytics
+  analytics: () =>
+    get<AreaAnalytics[]>('/analytics/areas'),
+}
+
+export interface AreaAnalytics {
+  nama: string
+  avg_per_m2: number
+  total_data: number
+  trend: string
+  segmen_dom: string
+  catatan: string
 }
 
 export function formatRupiah(n: number): string {

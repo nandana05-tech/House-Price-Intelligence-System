@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from openai import AsyncOpenAI
@@ -19,6 +19,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., description="Pesan terbaru dari user")
     history: list[ChatMessage] = Field(default=[], description="History percakapan sebelumnya")
+    language: Literal["id", "en", "zh"] = Field(default="id", description="Bahasa balasan: id | en | zh")
 
 class ChatResponse(BaseModel):
     reply: str
@@ -90,6 +91,20 @@ async def chat_with_agent(body: ChatRequest) -> ChatResponse:
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY tidak ditemukan di environment.")
 
+    lang = body.language if body.language in {"id", "en", "zh"} else "id"
+
+    lang_instruction_map = {
+        "id": "Selalu berikan jawaban dalam bahasa Indonesia yang natural, ramah, dan informatif.",
+        "en": "Always provide responses in natural, friendly, and informative English.",
+        "zh": "请始终使用自然、友好且信息充分的中文进行回答。",
+    }
+
+    rag_instruction_map = {
+        "id": "Gunakan konteks berikut untuk memperkaya jawaban Anda. Sebutkan properti pembanding dan pengetahuan area jika relevan.\n\n",
+        "en": "Use the following context to enrich your answer. Mention comparable properties and area knowledge when relevant.\n\n",
+        "zh": "请使用以下上下文来丰富你的回答。如相关，请提及可比房源和区域知识。\n\n",
+    }
+
     # Bangun messages dengan history percakapan
     messages = [
         {
@@ -98,7 +113,7 @@ async def chat_with_agent(body: ChatRequest) -> ChatResponse:
                 "Anda adalah AI asisten real estate yang sangat pintar khusus untuk area Depok. "
                 "Anda memiliki akses ke berbagai model machine learning melalui function calling. "
                 "Bantu user untuk menaksir harga rumah, mengklasifikasikan segmen, atau menentukan klaster properti. "
-                "Selalu berikan jawaban dalam bahasa Indonesia yang natural, ramah, dan informatif. "
+                f"{lang_instruction_map[lang]} "
                 "Jika Anda menggunakan tool prediksi, sertakan informasi harga atau segmen di jawaban Anda dengan jelas. "
                 "PENTING: Ingat selalu konteks percakapan sebelumnya. "
                 "Jika user sudah memberikan detail properti sebelumnya, gunakan informasi tersebut langsung tanpa bertanya ulang."
@@ -164,11 +179,7 @@ async def chat_with_agent(body: ChatRequest) -> ChatResponse:
             if rag_context:
                 messages.append({
                     "role": "system",
-                    "content": (
-                        "Gunakan konteks berikut untuk memperkaya jawaban Anda. "
-                        "Sebutkan properti pembanding dan pengetahuan area jika relevan.\n\n"
-                        + rag_context
-                    ),
+                    "content": rag_instruction_map[lang] + rag_context,
                 })
 
             second_response = await client.chat.completions.create(

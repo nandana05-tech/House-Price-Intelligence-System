@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   api, formatRupiah, segmenColor,
   type PropertyInput, type PredictResult,
@@ -8,6 +8,7 @@ import {
 } from '@/lib/api'
 import { Card, SectionTitle, Input, Select, Button, Metric, Skeleton, PageHeader, Pill } from '@/components/ui'
 import ChatPanel from '@/components/ChatPanel'
+import { type Lang, getStoredLang, t } from '@/lib/i18n'
 
 const LOKASI_OPTIONS = [
   'Babadan', 'Beji', 'Bojong Sari', 'Ciangsana', 'Cibubur',
@@ -28,6 +29,7 @@ interface AnalysisResult {
 }
 
 export default function PrediksiPage() {
+  const [lang, setLang] = useState<Lang>('id')
   const [form, setForm] = useState<PropertyInput>({
     kamar_tidur:   3,
     kamar_mandi:   2,
@@ -45,6 +47,16 @@ export default function PrediksiPage() {
   const [feedbackLoading, setFeedbackLoading] = useState(false)
   const [feedbackError,   setFeedbackError]   = useState<string | null>(null)
 
+  useEffect(() => {
+    setLang(getStoredLang())
+
+    function onStorage(e: StorageEvent) {
+      if (e.key === 'propvalai_lang') setLang(getStoredLang())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
   function setField(key: keyof PropertyInput, val: string) {
     setForm(prev => ({
       ...prev,
@@ -53,6 +65,11 @@ export default function PrediksiPage() {
   }
 
   async function handleAnalyze() {
+    if (form.luas_tanah <= 0 || form.luas_bangunan <= 0) {
+      setError("Luas tanah dan bangunan harus lebih besar dari 0");
+      return;
+    }
+
     setLoading(true)
     setError(null)
     setResult(null)
@@ -75,9 +92,28 @@ export default function PrediksiPage() {
         top_k: 3,
       }).catch(() => ({ comparables: [], count: 0 }))
 
-      setResult({ predict, classify, cluster, comparable: comp.comparables ?? [] })
+      const analysisResult = { predict, classify, cluster, comparable: comp.comparables ?? [] }
+      setResult(analysisResult)
+
+      // Save to riwayat history
+      try {
+        const entry = {
+          id:        crypto.randomUUID(),
+          timestamp: Date.now(),
+          form,
+          harga:     predict.harga_estimasi,
+          segmen:    classify.kelas_label,
+          cluster:   cluster.cluster_label,
+        }
+        const existing = JSON.parse(localStorage.getItem('propvalai_history') ?? '[]')
+        // Keep last 50 entries
+        const updated = [...existing, entry].slice(-50)
+        localStorage.setItem('propvalai_history', JSON.stringify(updated))
+        // Notify other tabs/pages
+        window.dispatchEvent(new StorageEvent('storage', { key: 'propvalai_history' }))
+      } catch { /* ignore storage errors */ }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Terjadi kesalahan.')
+      setError(e instanceof Error ? e.message : t(lang, 'pred.errorGeneric'))
     } finally {
       setLoading(false)
     }
@@ -87,7 +123,7 @@ export default function PrediksiPage() {
     if (!result || !hargaAsli) return
     const hargaAsliNum = Number(hargaAsli)
     if (hargaAsliNum < 10_000_000) {
-      setFeedbackError('Harga minimal Rp 10.000.000')
+      setFeedbackError(t(lang, 'pred.feedbackMinPrice'))
       return
     }
     setFeedbackLoading(true)
@@ -101,7 +137,7 @@ export default function PrediksiPage() {
       })
       setFeedbackSent(true)
     } catch (e: unknown) {
-      setFeedbackError(e instanceof Error ? e.message : 'Gagal mengirim feedback.')
+      setFeedbackError(e instanceof Error ? e.message : t(lang, 'pred.feedbackError'))
     } finally {
       setFeedbackLoading(false)
     }
@@ -125,8 +161,8 @@ export default function PrediksiPage() {
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title="Prediksi Harga Properti"
-        subtitle="Estimasi harga, segmen, dan klaster properti menggunakan model ML"
+        title={t(lang, 'pred.pageTitle')}
+        subtitle={t(lang, 'pred.pageSubtitle')}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -134,17 +170,17 @@ export default function PrediksiPage() {
 
           {/* Form */}
           <Card>
-            <SectionTitle>Parameter Properti</SectionTitle>
+            <SectionTitle>{t(lang, 'pred.parameterTitle')}</SectionTitle>
             <div className="grid grid-cols-3 gap-4 mb-4">
-              <Input label="Kamar Tidur"        type="number" min={1}  max={20} value={form.kamar_tidur}   onChange={v => setField('kamar_tidur', v)} />
-              <Input label="Kamar Mandi"        type="number" min={1}  max={10} value={form.kamar_mandi}   onChange={v => setField('kamar_mandi', v)} />
-              <Input label="Garasi"             type="number" min={0}  max={10} value={form.garasi}        onChange={v => setField('garasi', v)} />
-              <Input label="Luas Tanah (m²)"    type="number" min={1}           value={form.luas_tanah}    onChange={v => setField('luas_tanah', v)} />
-              <Input label="Luas Bangunan (m²)" type="number" min={1}           value={form.luas_bangunan} onChange={v => setField('luas_bangunan', v)} />
-              <Select label="Lokasi" value={form.lokasi} options={LOKASI_OPTIONS} onChange={v => setField('lokasi', v)} />
+              <Input label={t(lang, 'pred.bedroom')}      type="number" min={1}  max={10} value={form.kamar_tidur}   onChange={v => setField('kamar_tidur', v)} />
+              <Input label={t(lang, 'pred.bathroom')}     type="number" min={1}  max={10} value={form.kamar_mandi}   onChange={v => setField('kamar_mandi', v)} />
+              <Input label={t(lang, 'pred.garage')}       type="number" min={0}  max={5}  value={form.garasi}        onChange={v => setField('garasi', v)} />
+              <Input label={t(lang, 'pred.landArea')}     type="number" min={1}           value={form.luas_tanah || ''}    onChange={v => setField('luas_tanah', v)} />
+              <Input label={t(lang, 'pred.buildingArea')} type="number" min={1}           value={form.luas_bangunan || ''} onChange={v => setField('luas_bangunan', v)} />
+              <Select label={t(lang, 'pred.location')} value={form.lokasi} options={LOKASI_OPTIONS} onChange={v => setField('lokasi', v)} />
             </div>
             <Button onClick={handleAnalyze} loading={loading} className="w-full">
-              {loading ? 'Menganalisa...' : 'Analisa Properti'}
+              {loading ? t(lang, 'pred.analyzing') : t(lang, 'pred.analyze')}
             </Button>
             {error && (
               <p className="mt-3 text-[12px] text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
@@ -170,64 +206,64 @@ export default function PrediksiPage() {
 
               {/* Metrics utama */}
               <Card>
-                <SectionTitle>Hasil Analisa</SectionTitle>
+                <SectionTitle>{t(lang, 'pred.resultTitle')}</SectionTitle>
                 <div className="grid grid-cols-3 gap-3 mb-4">
                   <Metric
-                    label="Estimasi Harga"
+                    label={t(lang, 'pred.estimatedPrice')}
                     value={hargaFmt ?? formatRupiah(harga ?? 0)}
                     sub={`MAPE ±${mape?.toFixed(2)}%`}
                     accent
                   />
                   <Metric
-                    label="Segmen"
+                    label={t(lang, 'pred.segment')}
                     value={segmen}
-                    sub={probTop ? `Probabilitas: ${(probTop[1] * 100).toFixed(1)}%` : 'Klasifikasi model'}
+                    sub={probTop ? `${t(lang, 'pred.probability')}: ${(probTop[1] * 100).toFixed(1)}%` : 'Model classification'}
                   />
                   <Metric
-                    label="Klaster"
+                    label={t(lang, 'pred.cluster')}
                     value={clusterLabel}
-                    sub={clusterSummary ? `Median: ${formatRupiah(clusterSummary.harga_median)}` : undefined}
+                    sub={clusterSummary ? `${t(lang, 'pred.clusterMedian')}: ${formatRupiah(clusterSummary.harga_median)}` : undefined}
                   />
                 </div>
 
                 {/* Detail cluster */}
                 {clusterSummary && (
                   <div className="bg-stone-50 rounded-lg p-3 mb-4 text-[11px] text-stone-500 grid grid-cols-2 gap-1.5">
-                    <span>📍 Lokasi dominan: <strong className="text-stone-700">{clusterSummary.lokasi_dominan.join(', ')}</strong></span>
-                    <span>🏠 Luas tanah median: <strong className="text-stone-700">{clusterSummary.luas_tanah_median}m²</strong></span>
-                    <span>💰 Rentang: <strong className="text-stone-700">{formatRupiah(clusterSummary.harga_min)} – {formatRupiah(clusterSummary.harga_max)}</strong></span>
-                    <span>📊 Jumlah data: <strong className="text-stone-700">{clusterSummary.jumlah_data} properti</strong></span>
+                    <span>📍 {t(lang, 'pred.clusterDominantLocation')}: <strong className="text-stone-700">{(clusterSummary.lokasi_dominan ?? []).join(', ')}</strong></span>
+                    <span>🏠 {t(lang, 'pred.clusterLandMedian')}: <strong className="text-stone-700">{clusterSummary.luas_tanah_median}m²</strong></span>
+                    <span>💰 {t(lang, 'pred.clusterRange')}: <strong className="text-stone-700">{formatRupiah(clusterSummary.harga_min)} – {formatRupiah(clusterSummary.harga_max)}</strong></span>
+                    <span>📊 {t(lang, 'pred.clusterDataCount')}: <strong className="text-stone-700">{clusterSummary.jumlah_data} {t(lang, 'pred.properties')}</strong></span>
                   </div>
                 )}
 
                 {/* Model info */}
                 <div className="flex items-center gap-2 mb-4">
-                  <span className="text-[11px] text-stone-400">Model digunakan:</span>
+                  <span className="text-[11px] text-stone-400">{t(lang, 'pred.modelUsed')}</span>
                   <Pill color="stone">{model ?? '—'}</Pill>
                 </div>
 
                 {/* Feedback */}
                 <div className="border-t border-stone-100 pt-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-widest text-stone-400 mb-3">Koreksi Harga</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-widest text-stone-400 mb-3">{t(lang, 'pred.priceCorrection')}</p>
                   {feedbackSent ? (
                     <div className="flex items-center gap-2 text-[13px] text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                         <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5"/>
                         <path d="M4.5 7L6 8.5L9.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                       </svg>
-                      Feedback terkirim — terima kasih!
+                      {t(lang, 'pred.feedbackSent')}
                     </div>
                   ) : (
                     <>
                       <div className="flex gap-2">
                         <input
                           type="number"
-                          placeholder="Harga aktual (min Rp 10.000.000)..."
+                          placeholder={t(lang, 'pred.actualPricePlaceholder')}
                           value={hargaAsli}
                           onChange={e => setHargaAsli(e.target.value)}
                           className="flex-1 px-3 py-2 text-[13px] bg-stone-50 border border-stone-200 rounded-lg text-stone-900 placeholder-stone-300 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
                         />
-                        <Button variant="secondary" onClick={handleFeedback} loading={feedbackLoading}>Kirim</Button>
+                        <Button variant="secondary" onClick={handleFeedback} loading={feedbackLoading}>{t(lang, 'pred.send')}</Button>
                       </div>
                       {feedbackError && <p className="mt-2 text-[11px] text-red-500">{feedbackError}</p>}
                     </>
@@ -238,7 +274,7 @@ export default function PrediksiPage() {
               {/* Comparable */}
               {result.comparable.length > 0 && (
                 <Card>
-                  <SectionTitle>Properti Pembanding</SectionTitle>
+                  <SectionTitle>{t(lang, 'pred.comparableTitle')}</SectionTitle>
                   <div className="flex flex-col gap-2">
                     {result.comparable.map((p, i) => (
                       <div key={i} className="flex items-center justify-between px-4 py-3 bg-stone-50 rounded-lg border border-stone-100 hover:border-stone-200 transition-colors">
@@ -254,7 +290,7 @@ export default function PrediksiPage() {
                               <div className="w-24 h-1 bg-stone-200 rounded-full overflow-hidden">
                                 <div className="h-full bg-amber-400 rounded-full" style={{ width: `${Math.round(p.similarity * 100)}%` }} />
                               </div>
-                              <span className="text-[10px] text-stone-400">{Math.round(p.similarity * 100)}% mirip</span>
+                              <span className="text-[10px] text-stone-400">{Math.round(p.similarity * 100)}% {t(lang, 'pred.similarity')}</span>
                             </div>
                           )}
                         </div>

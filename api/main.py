@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.feedback_endpoint import router as feedback_router
 from api.predict_endpoint import router as predict_router
 from api.chat_endpoint import router as chat_router
+from api.analytics_endpoint import router as analytics_router
 
 
 @asynccontextmanager
@@ -57,6 +58,7 @@ app.add_middleware(
 app.include_router(feedback_router, prefix="/api/v1")
 app.include_router(predict_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
+app.include_router(analytics_router, prefix="/api/v1")
 
 
 @app.get("/health")

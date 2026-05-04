@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { api, type ChatMessage } from '@/lib/api'
+import { type Lang, getStoredLang, setStoredLang, t } from '@/lib/i18n'
 
 interface Message {
   role:        'user' | 'bot'
@@ -29,11 +30,23 @@ function FormattedMessage({ content }: { content: string }) {
   )
 }
 
-const QUICK_PROMPTS = [
-  'Bagaimana cara harga dihitung?',
-  'Apa itu segmen menengah atas?',
-  'Faktor apa yang mempengaruhi harga?',
-]
+const QUICK_PROMPTS: Record<Lang, string[]> = {
+  id: [
+    'Bagaimana cara harga dihitung?',
+    'Apa itu segmen menengah atas?',
+    'Faktor apa yang mempengaruhi harga?',
+  ],
+  en: [
+    'How is the price calculated?',
+    'What is the upper-middle segment?',
+    'What factors affect price?',
+  ],
+  zh: [
+    '房价是如何计算的？',
+    '什么是中高端细分市场？',
+    '哪些因素会影响房价？',
+  ],
+}
 
 export default function ChatPanel({
   lokasi,
@@ -42,10 +55,11 @@ export default function ChatPanel({
   lokasi?:        string
   hargaPrediksi?: number
 }) {
+  const [language, setLanguage] = useState<Lang>('id')
   const [messages, setMessages] = useState<Message[]>([
     {
       role:    'bot',
-      content: 'Halo! Saya siap membantu menjawab pertanyaan seputar estimasi harga dan pasar properti di Depok.',
+      content: t('id', 'chat.welcome'),
     },
   ])
   // History untuk dikirim ke backend (hanya role user/assistant)
@@ -57,6 +71,17 @@ export default function ChatPanel({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    const lang = getStoredLang()
+    setLanguage(lang)
+    setMessages([
+      {
+        role: 'bot',
+        content: t(lang, 'chat.welcome'),
+      },
+    ])
+  }, [])
 
   async function send(text?: string) {
     const msg = (text ?? input).trim()
@@ -72,7 +97,7 @@ export default function ChatPanel({
     setLoading(true)
     try {
       // Kirim pesan + history (tanpa pesan terakhir karena sudah ada di message)
-      const res = await api.chat(msg, history)
+      const res = await api.chat(msg, history, language)
 
       setMessages(prev => [...prev, {
         role:       'bot',
@@ -84,7 +109,7 @@ export default function ChatPanel({
       setHistory([...newHistory, { role: 'assistant', content: res.reply }])
 
     } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : 'Terjadi kesalahan.'
+      const errMsg = e instanceof Error ? e.message : t(language, 'chat.error')
       setMessages(prev => [...prev, { role: 'bot', content: `Error: ${errMsg}` }])
     } finally {
       setLoading(false)
@@ -95,9 +120,30 @@ export default function ChatPanel({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-4 border-b border-stone-100">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-400 mb-0.5">Asisten AI</p>
-        <p className="text-[13px] font-medium text-stone-800">Tanya soal properti</p>
-        {lokasi && <p className="text-[11px] text-stone-400 mt-0.5">Lokasi: {lokasi}</p>}
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-400 mb-0.5">{t(language, 'chat.title')}</p>
+          <select
+            value={language}
+            onChange={(e) => {
+              const next = e.target.value as Lang
+              setLanguage(next)
+              setStoredLang(next)
+              setMessages((prev) => {
+                if (prev.length === 1 && prev[0]?.role === 'bot') {
+                  return [{ role: 'bot', content: t(next, 'chat.welcome') }]
+                }
+                return prev
+              })
+            }}
+            className="text-[11px] bg-stone-50 border border-stone-200 rounded-md px-1.5 py-1 text-stone-700"
+          >
+            <option value="id">ID</option>
+            <option value="en">EN</option>
+            <option value="zh">中文</option>
+          </select>
+        </div>
+        <p className="text-[13px] font-medium text-stone-800">{t(language, 'chat.subtitle')}</p>
+        {lokasi && <p className="text-[11px] text-stone-400 mt-0.5">{t(language, 'chat.location')}: {lokasi}</p>}
       </div>
 
       {/* Messages */}
@@ -140,7 +186,7 @@ export default function ChatPanel({
       {/* Quick prompts */}
       {messages.length < 3 && (
         <div className="px-4 pb-3 flex flex-col gap-1.5">
-          {QUICK_PROMPTS.map(q => (
+          {QUICK_PROMPTS[language].map(q => (
             <button
               key={q}
               onClick={() => send(q)}
@@ -159,7 +205,7 @@ export default function ChatPanel({
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') send() }}
-            placeholder="Tulis pertanyaan..."
+            placeholder={t(language, 'chat.placeholder')}
             className="flex-1 px-3 py-2 text-[12px] bg-stone-50 border border-stone-200 rounded-lg text-stone-900 placeholder-stone-300 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
           />
           <button
